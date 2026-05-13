@@ -42,6 +42,7 @@ const DataRetur: React.FC = () => {
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [skuAction, setSkuAction] = useState<{sku: SKU, type: 'HOLD' | 'RUSAK'} | null>(null);
   const [actionQuantity, setActionQuantity] = useState<number>(0);
+  const [selectedPcsPerCarton, setSelectedPcsPerCarton] = useState<number>(0);
   const [activeSubTab, setActiveSubTab] = useState<'INPUT' | 'INSPEKSI' | 'HOLD' | 'RUSAK'>('INPUT');
   const [viewMode, setViewMode] = useState<'LOG' | 'SUMMARY'>('LOG');
 
@@ -773,6 +774,7 @@ const DataRetur: React.FC = () => {
                             onClick={() => {
                               setSkuAction({ sku, type: 'RUSAK_RELEASE' as any });
                               setActionQuantity(sku.brokenStock || 0);
+                              setSelectedPcsPerCarton(sku.pcsPerCarton || 1);
                             }}
                             className="w-10 h-10 flex items-center justify-center rounded-2xl transition-all text-emerald-500 hover:bg-emerald-50"
                             title="Rilis ke Jual"
@@ -785,6 +787,7 @@ const DataRetur: React.FC = () => {
                             onClick={() => {
                               setSkuAction({ sku, type: activeSubTab as 'HOLD' | 'RUSAK' });
                               setActionQuantity(activeSubTab === 'HOLD' ? sku.holdStock || 0 : sku.brokenStock || 0);
+                              setSelectedPcsPerCarton(sku.pcsPerCarton || 1);
                             }}
                             className={`w-10 h-10 flex items-center justify-center rounded-2xl transition-all ${activeSubTab === 'HOLD' ? 'text-emerald-500 hover:bg-emerald-50' : 'text-slate-300 hover:text-rose-500 hover:bg-rose-50'}`}
                             title={activeSubTab === 'HOLD' ? "Rilis ke Jual" : "Pemusnahan"}
@@ -831,6 +834,29 @@ const DataRetur: React.FC = () => {
               </div>
 
               <div className="space-y-5">
+                 {/* PCS Per Carton Selection (Only if Releasing and multiple sizes exist) */}
+                 {(skuAction.type === 'HOLD' || (skuAction.type as string) === 'RUSAK_RELEASE') && (
+                   Object.keys(skuAction.sku.detailedStock || {}).length > 1 && (
+                     <div className="space-y-1.5">
+                       <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest block text-center">Pilih Isi Dus Tujuan</label>
+                       <div className="flex flex-wrap justify-center gap-2">
+                         {Object.keys(skuAction.sku.detailedStock || {}).sort((a, b) => Number(a) - Number(b)).map(size => (
+                           <button
+                             key={size}
+                             onClick={() => setSelectedPcsPerCarton(Number(size))}
+                             className={`px-3 py-2 rounded-xl text-[10px] font-black transition-all border ${
+                               selectedPcsPerCarton === Number(size)
+                                 ? 'bg-rose-500 text-white border-rose-500 shadow-sm'
+                                 : 'bg-slate-50 text-slate-400 border-slate-100 hover:bg-slate-100'
+                             }`}
+                           >
+                             Isi {size}
+                           </button>
+                         ))}
+                       </div>
+                     </div>
+                   )
+                 )}
                  <div className="space-y-1.5">
                     <div className="relative">
                       <input 
@@ -867,13 +893,15 @@ const DataRetur: React.FC = () => {
                               await releaseFromHold({
                                 skuId: skuAction.sku.id,
                                 warehouseId: activeWarehouse.id,
-                                quantity: actionQuantity
+                                quantity: actionQuantity,
+                                pcsPerCarton: selectedPcsPerCarton
                               });
                            } else if ((skuAction.type as string) === 'RUSAK_RELEASE') {
                               await releaseFromBroken({
                                 skuId: skuAction.sku.id,
                                 warehouseId: activeWarehouse.id,
-                                quantity: actionQuantity
+                                quantity: actionQuantity,
+                                pcsPerCarton: selectedPcsPerCarton
                               });
                            } else {
                               await disposeBrokenStock({

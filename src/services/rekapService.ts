@@ -750,6 +750,7 @@ export const releaseFromHold = async (
     warehouseId: string;
     quantity: number;
     reason?: string;
+    pcsPerCarton?: number;
   }
 ) => {
   const batch = writeBatch(db);
@@ -775,7 +776,7 @@ export const releaseFromHold = async (
       totalMasuk: increment(data.quantity)
     };
 
-    const usedSize = skuData.pcsPerCarton || 1;
+    const usedSize = data.pcsPerCarton || skuData.pcsPerCarton || 1;
     const sizeKey = String(usedSize);
     const detailedStock = skuData.detailedStock || {};
     const currentVal = detailedStock[sizeKey];
@@ -854,6 +855,7 @@ export const releaseFromBroken = async (
     warehouseId: string;
     quantity: number;
     reason?: string;
+    pcsPerCarton?: number;
   }
 ) => {
   const batch = writeBatch(db);
@@ -879,7 +881,7 @@ export const releaseFromBroken = async (
       totalMasuk: increment(data.quantity)
     };
 
-    const usedSize = skuData.pcsPerCarton || 1;
+    const usedSize = data.pcsPerCarton || skuData.pcsPerCarton || 1;
     const sizeKey = String(usedSize);
     const detailedStock = skuData.detailedStock || {};
     const currentVal = detailedStock[sizeKey];
