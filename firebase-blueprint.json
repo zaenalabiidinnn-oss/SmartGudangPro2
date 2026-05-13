@@ -1,0 +1,89 @@
+{
+  "entities": {
+    "Warehouse": {
+      "title": "Warehouse",
+      "description": "Lokasi gudang penyimpanan",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "location": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "name"]
+    },
+    "SKU": {
+      "title": "SKU",
+      "description": "Master data barang",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Kode SKU" },
+        "name": { "type": "string", "description": "Nama Barang" },
+        "currentStock": { "type": "number", "description": "Stok saat ini" },
+        "threshold": { "type": "number", "description": "Ambang batas stok rendah", "default": 10 },
+        "pcsPerCarton": { "type": "number", "description": "Isi per Dus/Carton", "default": 1 },
+        "lastUpdated": { "type": "string", "format": "date-time" },
+        "warehouseId": { "type": "string", "description": "ID Gudang" }
+      },
+      "required": ["id", "name", "currentStock", "warehouseId"]
+    },
+    "Transaction": {
+      "title": "Transaction",
+      "description": "Catatan mutasi barang",
+      "type": "object",
+      "properties": {
+        "skuId": { "type": "string" },
+        "skuName": { "type": "string" },
+        "type": { "type": "string", "enum": ["SCAN", "MASUK", "KELUAR", "SCAN KELUAR"] },
+        "quantity": { "type": "number" },
+        "date": { "type": "string", "format": "date" },
+        "receiptId": { "type": "string", "description": "Nomor resi/dokumen" },
+        "reason": { "type": "string", "description": "Alasan keluar khusus" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" },
+        "warehouseId": { "type": "string" }
+      },
+      "required": ["skuId", "type", "quantity", "date", "warehouseId"]
+    },
+    "Summary": {
+      "title": "Summary",
+      "description": "Rekap harian/bulanan/tahunan",
+      "type": "object",
+      "properties": {
+        "skuId": { "type": "string" },
+        "skuName": { "type": "string" },
+        "date": { "type": "string" },
+        "masuk": { "type": "number" },
+        "keluar": { "type": "number" },
+        "stok": { "type": "number" },
+        "updatedAt": { "type": "string", "format": "date-time" },
+        "warehouseId": { "type": "string" }
+      }
+    },
+    "UserProfile": {
+      "title": "User Profile",
+      "description": "Informasi pengguna dan peran",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "email": { "type": "string" },
+        "displayName": { "type": "string" },
+        "role": { "type": "string", "enum": ["ADMIN", "STAFF"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "email", "role"]
+    }
+  },
+  "firestore": {
+    "/users/{uid}": { "schema": "UserProfile", "description": "Profil Pengguna" },
+    "/warehouses/{warehouseId}": { "schema": "Warehouse", "description": "Daftar Gudang" },
+    "/skus/{skuId}": { "schema": "SKU", "description": "Daftar SKU" },
+    "/history/masuk/records/{id}": { "schema": "Transaction", "description": "Log barang masuk" },
+    "/history/keluar/records/{id}": { "schema": "Transaction", "description": "Log barang keluar (scan & manual)" },
+    "/history/retur/records/{id}": { "schema": "Transaction", "description": "Log barang retur" },
+    "/history/inspeksi/records/{id}": { "schema": "Transaction", "description": "Log hasil inspeksi retur" },
+    "/history/daily/records/{id}": { "schema": "Summary", "description": "Rekap harian" },
+    "/history/monthly/records/{id}": { "schema": "Summary", "description": "Rekap bulanan" },
+    "/history/yearly/records/{id}": { "schema": "Summary", "description": "Rekap tahunan" }
+  }
+}

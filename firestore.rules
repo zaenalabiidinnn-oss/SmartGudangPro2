@@ -1,0 +1,126 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128;
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isMasterAdmin() {
+      return isSignedIn() 
+        && request.auth.token.email == 'zaenalabiidinnn@gmail.com';
+    }
+
+    function isAdmin() {
+      return isSignedIn() 
+        && (
+          (request.auth.token.email_verified == true && exists(/databases/$(database)/documents/users/$(request.auth.uid)) && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'ADMIN')
+          || request.auth.token.email == 'zaenalabiidinnn@gmail.com'
+          || request.auth.token.email == 'admin@warehouse.com'
+        );
+    }
+
+    // User Profiles
+    match /users/{userId} {
+      allow read: if isSignedIn() && (request.auth.uid == userId || isMasterAdmin());
+      allow create: if isSignedIn() && request.auth.uid == userId;
+      allow update: if isSignedIn() && (
+        (request.auth.uid == userId && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['role'])) ||
+        isMasterAdmin()
+      );
+      allow delete: if isMasterAdmin();
+    }
+
+    // Warehouse Management
+    match /warehouses/{warehouseId} {
+      allow read: if isSignedIn();
+      allow create: if isAdmin() 
+        && incoming().id == warehouseId
+        && incoming().name is string && incoming().name.size() <= 255;
+      allow update: if isAdmin() && incoming().name is string;
+      allow delete: if isAdmin();
+    }
+
+    // SKU Management
+    match /skus/{skuId} {
+      allow read: if isSignedIn();
+      allow create: if isAdmin()
+        && incoming().name is string && incoming().name.size() <= 255
+        && incoming().currentStock is number
+        && incoming().warehouseId is string
+        && (!('threshold' in incoming()) || incoming().threshold is number)
+        && (!('pcsPerCarton' in incoming()) || incoming().pcsPerCarton is number);
+      allow update: if isSignedIn()
+        && (
+          isAdmin() || 
+          (
+            // Allow staff to update only currentStock if it's via a background process (like transactions)
+            incoming().diff(existing()).affectedKeys().hasOnly(['currentStock', 'lastUpdated', 'pcsPerCarton'])
+          )
+        )
+        && (!('threshold' in incoming()) || incoming().threshold is number)
+        && (!('pcsPerCarton' in incoming()) || incoming().pcsPerCarton is number)
+        && incoming().warehouseId == existing().warehouseId;
+      allow delete: if isAdmin();
+    }
+
+    // Transaction Records
+    function isValidTransaction(data) {
+      return data.skuId is string && isValidId(data.skuId)
+        && data.type in ['SCAN', 'MASUK', 'KELUAR', 'RESTOCK', 'SALE', 'SPECIAL', 'SCAN KELUAR', 'RETUR', 'INSPEKSI']
+        && data.quantity is number && data.quantity != 0
+        && data.date is string
+        && data.warehouseId is string;
+    }
+
+    match /history/masuk/records/{id} {
+      allow read: if isSignedIn() && (!('warehouseId' in existing()) || resource.data.warehouseId is string);
+      allow create: if isSignedIn() && isValidTransaction(incoming());
+      allow update: if isAdmin() && isValidTransaction(incoming());
+      allow delete: if isAdmin();
+    }
+
+    match /history/keluar/records/{id} {
+      allow read: if isSignedIn() && (!('warehouseId' in existing()) || resource.data.warehouseId is string);
+      allow create: if isSignedIn() && isValidTransaction(incoming());
+      allow update: if isAdmin() && isValidTransaction(incoming());
+      allow delete: if isAdmin();
+    }
+
+    match /history/retur/records/{id} {
+      allow read: if isSignedIn() && (!('warehouseId' in existing()) || resource.data.warehouseId is string);
+      allow create: if isSignedIn() && isValidTransaction(incoming());
+      allow update: if isAdmin() && isValidTransaction(incoming());
+      allow delete: if isAdmin();
+    }
+
+    match /history/inspeksi/records/{id} {
+      allow read: if isSignedIn() && (!('warehouseId' in existing()) || resource.data.warehouseId is string);
+      allow create: if isSignedIn() && isValidTransaction(incoming());
+      allow update: if isAdmin() && isValidTransaction(incoming());
+      allow delete: if isAdmin();
+    }
+
+    // Summaries
+    match /history/{period}/records/{id} {
+      allow read: if isSignedIn();
+      allow create, update: if isSignedIn() && incoming().warehouseId is string;
+      allow delete: if isAdmin();
+    }
+  }
+}

@@ -1,0 +1,6 @@
+{
+  "name": "SMARTGUDANG Pro",
+  "description": "Sistem manajemen stok gudang cerdas dengan scan barcode, manajemen retur & barang rusak, rekap otomatis, dan monitoring real-time.",
+  "requestFramePermissions": [],
+  "majorCapabilities": []
+}
