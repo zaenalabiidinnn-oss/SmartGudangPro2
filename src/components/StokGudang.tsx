@@ -676,6 +676,17 @@ const StokGudang: React.FC<StokGudangProps> = ({ role }) => {
         </div>
 
         <div className="flex flex-wrap items-center gap-3">
+          <div className="relative group min-w-[240px]">
+            <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-indigo-600 transition-colors" />
+            <input
+              type="text"
+              placeholder="Cari SKU atau nama..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="w-full pl-9 pr-4 py-2.5 bg-white border border-slate-200 rounded-2xl focus:ring-4 focus:ring-indigo-100 focus:border-indigo-400 outline-none transition-all font-bold text-xs text-slate-700 placeholder:text-slate-400 shadow-sm"
+            />
+          </div>
+
           <div className="bg-white px-4 py-2.5 rounded-2xl border border-slate-200 shadow-sm flex items-center gap-3 group hover:border-indigo-200 transition-colors cursor-default">
             <div className="bg-slate-100 w-8 h-8 rounded-lg flex items-center justify-center group-hover:bg-indigo-50 transition-colors">
               <Package className="w-4 h-4 text-slate-500 group-hover:text-indigo-600" />
@@ -700,18 +711,7 @@ const StokGudang: React.FC<StokGudangProps> = ({ role }) => {
 
       {/* Toolbar */}
       <div className="bg-white/50 backdrop-blur-sm p-3 rounded-2xl border border-slate-200 flex flex-col xl:flex-row gap-3 items-stretch shadow-sm">
-        <div className="flex-1 flex gap-2">
-            <div className="relative flex-1 group">
-              <Search className="w-5 h-5 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-indigo-600 transition-colors" />
-              <input
-                type="text"
-                placeholder="Cari SKU atau nama barang..."
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                className="w-full pl-10 pr-4 py-3 bg-white border border-slate-200 rounded-xl focus:ring-4 focus:ring-indigo-100 focus:border-indigo-400 outline-none transition-all font-medium text-slate-700 placeholder:text-slate-400 shadow-sm"
-              />
-            </div>
-            
+        <div className="flex flex-1 gap-2">
             <div className="relative group shrink-0">
               <select
                 value={sortBy}
