@@ -5,7 +5,7 @@ import { handleFirestoreError, OperationType } from '../lib/errorHandlers';
 import { useWarehouse } from '../contexts/WarehouseContext';
 import { processTransaction } from '../services/rekapService';
 import { SKU } from '../types';
-import { Package, Plus, Trash2, Search, Edit2, Save, X, AlertTriangle, Bell, Loader2, Send, FileDown, Filter } from 'lucide-react';
+import { Package, Plus, Trash2, Search, Edit2, Save, X, AlertTriangle, Bell, Loader2, Send, FileDown, Filter, ArrowUpDown } from 'lucide-react';
 import { utils, writeFile, read } from 'xlsx';
 import { motion, AnimatePresence } from 'motion/react';
 
@@ -68,6 +68,7 @@ const StokGudang: React.FC<StokGudangProps> = ({ role }) => {
         threshold: newSKU.threshold,
         pcsPerCarton: newSKU.pcsPerCarton,
         detailedStock: { [sizeStr]: { total: 0, boxes: 0 } },
+        createdAt: new Date(),
         lastUpdated: new Date(),
         warehouseId: activeWarehouse.id
       });
@@ -120,6 +121,7 @@ const StokGudang: React.FC<StokGudangProps> = ({ role }) => {
     currentStock: '',
     threshold: ''
   });
+  const [sortBy, setSortBy] = useState<string>('sku_asc');
   const [exportFields, setExportFields] = useState({
     id: true,
     name: true,
@@ -330,6 +332,7 @@ const StokGudang: React.FC<StokGudangProps> = ({ role }) => {
             threshold: threshold,
             pcsPerCarton: pcsPerCarton,
             detailedStock: { ["1"]: { total: 0, boxes: 0 } },
+            createdAt: new Date(),
             lastUpdated: new Date(),
             warehouseId: activeWarehouse.id
           });
@@ -417,7 +420,38 @@ const StokGudang: React.FC<StokGudangProps> = ({ role }) => {
     const matchesThreshold = !filters.threshold || String(s.threshold ?? 10).includes(filters.threshold);
 
     return matchesSearch && matchesId && matchesName && matchesStock && matchesThreshold;
-  }).sort((a, b) => a.currentStock - b.currentStock);
+  }).sort((a, b) => {
+    switch (sortBy) {
+      case 'sku_asc':
+        return a.id.localeCompare(b.id);
+      case 'sku_desc':
+        return b.id.localeCompare(a.id);
+      case 'newest': {
+        const getT = (item: any) => {
+          const date = item.createdAt || item.lastUpdated;
+          if (!date) return 0;
+          if (date.seconds) return date.seconds * 1000;
+          return new Date(date).getTime() || 0;
+        };
+        return getT(b) - getT(a);
+      }
+      case 'oldest': {
+        const getT = (item: any) => {
+          const date = item.createdAt || item.lastUpdated;
+          if (!date) return 0;
+          if (date.seconds) return date.seconds * 1000;
+          return new Date(date).getTime() || 0;
+        };
+        return getT(a) - getT(b);
+      }
+      case 'stock_low':
+        return (a.currentStock || 0) - (b.currentStock || 0);
+      case 'stock_high':
+        return (b.currentStock || 0) - (a.currentStock || 0);
+      default:
+        return (a.currentStock || 0) - (b.currentStock || 0);
+    }
+  });
 
   const lowStockSkus = skus.filter(sku => sku.currentStock <= (sku.threshold ?? 10));
 
@@ -677,6 +711,22 @@ const StokGudang: React.FC<StokGudangProps> = ({ role }) => {
                 className="w-full pl-10 pr-4 py-3 bg-white border border-slate-200 rounded-xl focus:ring-4 focus:ring-indigo-100 focus:border-indigo-400 outline-none transition-all font-medium text-slate-700 placeholder:text-slate-400 shadow-sm"
               />
             </div>
+            
+            <div className="relative group shrink-0">
+              <select
+                value={sortBy}
+                onChange={(e) => setSortBy(e.target.value)}
+                className="px-4 py-3 bg-white border border-slate-200 rounded-xl focus:ring-4 focus:ring-indigo-100 focus:border-indigo-400 outline-none transition-all font-bold text-sm text-slate-700 shadow-sm appearance-none cursor-pointer min-w-[140px] text-center"
+              >
+                <option value="sku_asc">A - Z (Kode SKU)</option>
+                <option value="sku_desc">Z - A (Kode SKU)</option>
+                <option value="newest">Terbaru</option>
+                <option value="oldest">Terlama</option>
+                <option value="stock_low">Stok: Low-High</option>
+                <option value="stock_high">Stok: High-Low</option>
+              </select>
+            </div>
+
             {isAdmin && (
               <button
                  onClick={() => setIsAdding(!isAdding)}
