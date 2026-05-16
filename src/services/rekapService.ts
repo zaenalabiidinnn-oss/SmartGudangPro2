@@ -425,6 +425,14 @@ export const deleteTransaction = async (type: TransactionType, logId: string) =>
 
     const { ref: skuRef, snap: skuSnap, internalId: internalSkuId } = await findSku(warehouseId, skuId);
     
+    // Safety check: if internalSkuId is null, we can't update summaries or SKU docs safely
+    if (!internalSkuId) {
+      console.warn('SKU Metadata not found for transaction, deleting record only');
+      batch.delete(logRef);
+      await batch.commit();
+      return;
+    }
+
     // Determine if it was an outgoing or incoming transaction
     // SCAN and KELUAR are outgoing
     const isOutgoing = (
@@ -443,7 +451,7 @@ export const deleteTransaction = async (type: TransactionType, logId: string) =>
     const reversedMasukQty = isOutgoing ? 0 : -quantity;
     const reversedKeluarQty = isOutgoing ? -quantity : 0;
 
-    if (skuSnap && skuSnap.exists()) {
+    if (skuRef && skuSnap && skuSnap.exists()) {
       const updateData: any = {
         lastUpdated: serverTimestamp()
       };
