@@ -189,42 +189,47 @@ export const processTransaction = async (
     const logs: any[] = [];
 
     if (isOutgoing) {
-      // NORMAL OUTGOING LOGIC (from currentStock)
-      // If user is in PCS mode (pcsPerCarton=0 or 1), try to subtract from the SKU's primary packaging size if possible
-      // This keeps the "pieces" aligned with the "boxes" they came from.
+      // Determine packaging size
       const usedPcsPerCarton = (data.pcsPerCarton && data.pcsPerCarton > 1) ? data.pcsPerCarton : (skuPcsPerCarton || 1);
       const sizeKey = String(usedPcsPerCarton);
-      
-      updateData.currentStock = increment(-totalQuantity);
-      updateData.totalKeluar = increment(totalQuantity);
 
-      // If reason contains 'rusak', move to broken stock pool and add to retur history for visibility
-      const reasonLower = (data.reason || '').toLowerCase();
-      if (reasonLower.includes('rusak')) {
-        updateData.brokenStock = increment(totalQuantity);
+      if (data.isBrokenStockKeluar) {
+        // DISPOSING BROKEN STOCK: Decrement broken stock pool
+        updateData.brokenStock = increment(-totalQuantity);
+        // We still log it as a KELUAR transaction for history purposes
+      } else {
+        // NORMAL OUTGOING LOGIC (from currentStock)
+        updateData.currentStock = increment(-totalQuantity);
+        updateData.totalKeluar = increment(totalQuantity);
+
+        // If reason contains 'rusak', move to broken stock pool and add to retur history for visibility
+        const reasonLower = (data.reason || '').toLowerCase();
+        if (reasonLower.includes('rusak')) {
+          updateData.brokenStock = increment(totalQuantity);
+          
+          // Add a shadow record to retur logs so it appears in the Retur management sub-menu
+          const returLogRef = doc(collection(db, 'history/retur/records'));
+          batch.set(returLogRef, cleanData({
+            ...data,
+            quantity: totalQuantity,
+            skuName,
+            type: 'RETUR',
+            isAutoProcessed: true, // Flag to identify it was moved from Keluar
+            reason: `[AUTO-BROKEN] ${data.reason}`,
+            createdAt: now,
+            updatedAt: now,
+            warehouseId: data.warehouseId
+          }));
+        }
         
-        // Add a shadow record to retur logs so it appears in the Retur management sub-menu
-        const returLogRef = doc(collection(db, 'history/retur/records'));
-        batch.set(returLogRef, cleanData({
-          ...data,
-          quantity: totalQuantity,
-          skuName,
-          type: 'RETUR',
-          isAutoProcessed: true, // Flag to identify it was moved from Keluar
-          reason: `[AUTO-BROKEN] ${data.reason}`,
-          createdAt: now,
-          updatedAt: now,
-          warehouseId: data.warehouseId
-        }));
+        // Update the specific size group
+        updateData[`detailedStock.${sizeKey}.total`] = increment(-totalQuantity);
+        
+        // Calculate resulting boxes for this size group
+        const currentSizeTotal = detailedStock[sizeKey]?.total || 0;
+        const newSizeTotal = currentSizeTotal - totalQuantity;
+        updateData[`detailedStock.${sizeKey}.boxes`] = usedPcsPerCarton > 1 ? Math.floor(newSizeTotal / usedPcsPerCarton) : 0;
       }
-      
-      // Update the specific size group
-      updateData[`detailedStock.${sizeKey}.total`] = increment(-totalQuantity);
-      
-      // Calculate resulting boxes for this size group
-      const currentSizeTotal = detailedStock[sizeKey]?.total || 0;
-      const newSizeTotal = currentSizeTotal - totalQuantity;
-      updateData[`detailedStock.${sizeKey}.boxes`] = usedPcsPerCarton > 1 ? Math.floor(newSizeTotal / usedPcsPerCarton) : 0;
 
       logs.push({
         ...data,
@@ -302,7 +307,8 @@ export const processTransaction = async (
     // 4. Update Summaries (Harian, Bulanan, Tahunan) - Skip if RETUR
     if (type !== 'RETUR') {
       const dateStr = data.date; // YYYY-MM-DD
-      const qtyChange = isOutgoing ? -totalQuantity : totalQuantity;
+      // If its disposing broken stock, current stock doesn't change, so qtyChange for summaries should be 0
+      const qtyChange = data.isBrokenStockKeluar ? 0 : (isOutgoing ? -totalQuantity : totalQuantity);
       const monthStr = dateStr.substring(0, 7); // YYYY-MM
       const yearStr = dateStr.substring(0, 4); // YYYY
 
@@ -434,43 +440,53 @@ export const deleteTransaction = async (type: TransactionType, logId: string) =>
         const sizeKey = String(rawPcsPerCarton ?? 1);
         const divisor = (rawPcsPerCarton || 1);
         
-        updateData.currentStock = increment(reversedStockQty);
-        if (isOutgoing) {
-            updateData.totalKeluar = increment(-quantity);
-            // Reverse brokenStock if reason contains 'rusak'
-            const reasonLower = (data.reason || '').toLowerCase();
-            if (reasonLower.includes('rusak')) {
-                updateData.brokenStock = increment(-quantity);
-                
-                // Also find and delete the shadow retur record
-                const shadowQ = query(
-                    collection(db, 'history/retur/records'),
-                    where('warehouseId', '==', warehouseId),
-                    where('skuId', '==', skuId),
-                    where('receiptId', '==', data.receiptId),
-                    where('isAutoProcessed', '==', true)
-                );
-                const shadowSnap = await getDocs(shadowQ);
-                shadowSnap.forEach(doc => batch.delete(doc.ref));
-            }
+        if (data.isBrokenStockKeluar) {
+            // Reversing broken stock disposal: Add back to broken pool
+            updateData.brokenStock = increment(quantity);
         } else {
-          updateData.totalMasuk = increment(-quantity);
+            updateData.currentStock = increment(reversedStockQty);
+            if (isOutgoing) {
+                updateData.totalKeluar = increment(-quantity);
+                // Reverse brokenStock if reason contains 'rusak'
+                const reasonLower = (data.reason || '').toLowerCase();
+                if (reasonLower.includes('rusak')) {
+                    updateData.brokenStock = increment(-quantity);
+                    
+                    // Also find and delete the shadow retur record
+                    const shadowQ = query(
+                        collection(db, 'history/retur/records'),
+                        where('warehouseId', '==', warehouseId),
+                        where('skuId', '==', skuId),
+                        where('receiptId', '==', data.receiptId),
+                        where('isAutoProcessed', '==', true)
+                    );
+                    const shadowSnap = await getDocs(shadowQ);
+                    shadowSnap.forEach(doc => batch.delete(doc.ref));
+                }
+            } else {
+              updateData.totalMasuk = increment(-quantity);
+            }
         }
 
         if (data.type === 'RETUR') {
           updateData.returnStock = increment(-quantity);
         }
 
-        // Use dot notation for atomic updates
-        updateData[`detailedStock.${sizeKey}.total`] = increment(reversedStockQty);
-        
-        const fullCartons = divisor > 0 ? Math.floor(quantity / divisor) : 0;
-        if (fullCartons !== 0) {
-          updateData[`detailedStock.${sizeKey}.boxes`] = increment(isOutgoing ? fullCartons : -fullCartons);
+        if (!data.isBrokenStockKeluar) {
+            // Use dot notation for atomic updates
+            updateData[`detailedStock.${sizeKey}.total`] = increment(reversedStockQty);
+            
+            const fullCartons = divisor > 0 ? Math.floor(quantity / divisor) : 0;
+            if (fullCartons !== 0) {
+              updateData[`detailedStock.${sizeKey}.boxes`] = increment(isOutgoing ? fullCartons : -fullCartons);
+            }
         }
 
         // 2. Adjust Summaries
         const skuName = skuSnap.data().name;
+        
+        // Final adjustment for stokAkhir summary if deleting disposal
+        const summaryStockChange = data.isBrokenStockKeluar ? 0 : reversedStockQty;
         
         batch.set(doc(db, 'history/daily/records', `${dateStr}_${internalSkuId}`), {
           skuId,
@@ -478,7 +494,7 @@ export const deleteTransaction = async (type: TransactionType, logId: string) =>
           date: dateStr,
           masuk: increment(reversedMasukQty),
           keluar: increment(reversedKeluarQty),
-          stokAkhir: increment(reversedStockQty),
+          stokAkhir: increment(summaryStockChange),
           updatedAt: serverTimestamp(),
           warehouseId
         }, { merge: true });
@@ -489,7 +505,7 @@ export const deleteTransaction = async (type: TransactionType, logId: string) =>
           month: monthStr,
           masuk: increment(reversedMasukQty),
           keluar: increment(reversedKeluarQty),
-          stok: increment(reversedStockQty),
+          stok: increment(summaryStockChange),
           updatedAt: serverTimestamp(),
           warehouseId
         }, { merge: true });
@@ -500,7 +516,7 @@ export const deleteTransaction = async (type: TransactionType, logId: string) =>
           year: yearStr,
           masuk: increment(reversedMasukQty),
           keluar: increment(reversedKeluarQty),
-          stok: increment(reversedStockQty),
+          stok: increment(summaryStockChange),
           updatedAt: serverTimestamp(),
           warehouseId
         }, { merge: true });
