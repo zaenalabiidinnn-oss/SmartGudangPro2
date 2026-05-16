@@ -438,11 +438,20 @@ const HistoryLogs: React.FC<HistoryLogsProps> = ({ role }) => {
   const stats = filteredLogs.reduce((acc, log) => {
     const isPositive = log._source === 'MASUK' || log._source === 'RETUR' || log.type === 'RESTOCK' || log.type === 'MASUK' || log.type === 'RETUR';
     const isKoreksi = log.type === 'KOREKSI';
+    const isPemusnahan = log.type === 'PEMUSNAHAN';
     const pcsPerCarton = log.pcsPerCarton || 1;
     const qty = Math.abs(log.quantity);
     
     if (isKoreksi) {
       // Logic for correction - usually skip from simple sum
+    } else if (isPemusnahan) {
+      acc.pemusnahanPcs += qty;
+      if (pcsPerCarton > 1) {
+        acc.pemusnahanDusCount += Math.floor(qty / pcsPerCarton);
+        acc.pemusnahanRemPcs += qty % pcsPerCarton;
+      } else {
+        acc.pemusnahanRemPcs += qty;
+      }
     } else if (isPositive) {
       acc.masukPcs += log.quantity;
       if (pcsPerCarton > 1) {
@@ -461,7 +470,7 @@ const HistoryLogs: React.FC<HistoryLogsProps> = ({ role }) => {
       }
     }
     return acc;
-  }, { masukPcs: 0, masukDusCount: 0, masukRemPcs: 0, keluarPcs: 0, keluarDusCount: 0, keluarRemPcs: 0 });
+  }, { masukPcs: 0, masukDusCount: 0, masukRemPcs: 0, keluarPcs: 0, keluarDusCount: 0, keluarRemPcs: 0, pemusnahanPcs: 0, pemusnahanDusCount: 0, pemusnahanRemPcs: 0 });
 
   // Unique lists for dropdowns
   const uniqueItems = Array.from(new Set(logs.map(l => l.skuId))).filter(Boolean).sort();
@@ -937,9 +946,11 @@ const HistoryLogs: React.FC<HistoryLogsProps> = ({ role }) => {
                         <span className={`text-[9px] font-black px-2.5 py-1 rounded-xl uppercase tracking-widest border ${
                           isPositive 
                             ? (log._source === 'RETUR' || log.type === 'RETUR' ? 'bg-rose-50 text-rose-600 border-rose-100' : 'bg-emerald-50 text-emerald-600 border-emerald-100')
-                            : log.type === 'SCAN KELUAR' || log.type === 'SALE'
-                              ? 'bg-blue-50 text-blue-600 border-blue-100'
-                              : 'bg-orange-50 text-orange-600 border-orange-100'
+                            : log.type === 'PEMUSNAHAN'
+                              ? 'bg-slate-100 text-slate-600 border-slate-200'
+                              : log.type === 'SCAN KELUAR' || log.type === 'SALE'
+                                ? 'bg-blue-50 text-blue-600 border-blue-100'
+                                : 'bg-orange-50 text-orange-600 border-orange-100'
                         }`}>
                           {log.type || log._source}
                         </span>
@@ -1083,8 +1094,11 @@ const HistoryLogs: React.FC<HistoryLogsProps> = ({ role }) => {
                      <td className="px-2 py-4 text-center border-r border-white/5 bg-rose-900/60">
                         {stats.keluarPcs.toLocaleString()} PCS
                      </td>
-                     <td className="px-8 py-4 text-right">
-                        {filteredLogs.length} Entri
+                     <td className="px-4 py-4 text-center bg-slate-800 border-l border-white/10">
+                        <div className="flex flex-col">
+                           <span className="text-slate-400">DISPOSE</span>
+                           <span className="text-rose-500">{stats.pemusnahanPcs.toLocaleString()} PCS</span>
+                        </div>
                      </td>
                   </tr>
                </tfoot>

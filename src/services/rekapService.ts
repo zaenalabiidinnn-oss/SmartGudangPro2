@@ -182,10 +182,10 @@ export const processTransaction = async (
     const skuName = skuData.name;
 
     // Determine internal type for log
-    let logType = type as string;
+    let logType = data.isBrokenStockKeluar ? 'PEMUSNAHAN' : (type as string);
     if (type === 'SCAN') logType = 'SCAN KELUAR';
-    if (type === 'MASUK') logType = 'MASUK';
-    if (type === 'KELUAR') logType = 'KELUAR';
+    if (logType === 'MASUK') logType = 'MASUK';
+    if (logType === 'KELUAR' && !data.isBrokenStockKeluar) logType = 'KELUAR';
     if (type === 'RETUR') logType = 'RETUR';
 
     // 2. Determine which packaging size to use for breakdown
@@ -332,7 +332,8 @@ export const processTransaction = async (
       const yearlyId = `${yearStr}_${internalSkuId}`;
 
       const masukIncr = isOutgoing ? 0 : data.quantity;
-      const keluarIncr = isOutgoing ? data.quantity : 0;
+      const keluarIncr = (isOutgoing && !data.isBrokenStockKeluar) ? data.quantity : 0;
+      const pemusnahanIncr = data.isBrokenStockKeluar ? data.quantity : 0;
 
       // Daily
       batch.set(doc(db, 'history/daily/records', dailyId), {
@@ -341,6 +342,7 @@ export const processTransaction = async (
         date: dateStr,
         masuk: increment(masukIncr),
         keluar: increment(keluarIncr),
+        pemusnahan: increment(pemusnahanIncr),
         stokAkhir: increment(qtyChange),
         updatedAt: now,
         warehouseId: data.warehouseId
@@ -353,6 +355,7 @@ export const processTransaction = async (
         month: monthStr,
         masuk: increment(masukIncr),
         keluar: increment(keluarIncr),
+        pemusnahan: increment(pemusnahanIncr),
         stok: increment(qtyChange),
         updatedAt: now,
         warehouseId: data.warehouseId
@@ -365,6 +368,7 @@ export const processTransaction = async (
         year: yearStr,
         masuk: increment(masukIncr),
         keluar: increment(keluarIncr),
+        pemusnahan: increment(pemusnahanIncr),
         stok: increment(qtyChange),
         updatedAt: now,
         warehouseId: data.warehouseId
@@ -553,15 +557,18 @@ export const deleteTransaction = async (type: TransactionType, logId: string) =>
         const isOutgoing = (
           type === 'SCAN' || 
           type === 'KELUAR' || 
+          type === 'PEMUSNAHAN' ||
           data.type === 'SALE' || 
           data.type === 'SPECIAL' || 
           data.type === 'SCAN KELUAR' ||
-          data.type === 'KELUAR'
+          data.type === 'KELUAR' ||
+          data.type === 'PEMUSNAHAN'
         );
         
         const reversedStockQty = isOutgoing ? quantity : -quantity;
         const reversedMasukQty = isOutgoing ? 0 : -quantity;
-        const reversedKeluarQty = isOutgoing ? -quantity : 0;
+        const reversedKeluarQty = (isOutgoing && !data.isBrokenStockKeluar) ? -quantity : 0;
+        const reversedPemusnahanQty = data.isBrokenStockKeluar ? -quantity : 0;
 
         if (data.isBrokenStockKeluar) {
             updateData.brokenStock = increment(quantity);
@@ -601,15 +608,15 @@ export const deleteTransaction = async (type: TransactionType, logId: string) =>
         const summaryStockChange = data.isBrokenStockKeluar ? 0 : reversedStockQty;
         
         batch.set(doc(db, 'history/daily/records', `${dateStr}_${internalSkuId}`), {
-          skuId, skuName, date: dateStr, masuk: increment(reversedMasukQty), keluar: increment(reversedKeluarQty), stokAkhir: increment(summaryStockChange), updatedAt: serverTimestamp(), warehouseId
+          skuId, skuName, date: dateStr, masuk: increment(reversedMasukQty), keluar: increment(reversedKeluarQty), pemusnahan: increment(reversedPemusnahanQty), stokAkhir: increment(summaryStockChange), updatedAt: serverTimestamp(), warehouseId
         }, { merge: true });
 
         batch.set(doc(db, 'history/monthly/records', `${monthStr}_${internalSkuId}`), {
-          skuId, skuName, month: monthStr, masuk: increment(reversedMasukQty), keluar: increment(reversedKeluarQty), stok: increment(summaryStockChange), updatedAt: serverTimestamp(), warehouseId
+          skuId, skuName, month: monthStr, masuk: increment(reversedMasukQty), keluar: increment(reversedKeluarQty), pemusnahan: increment(reversedPemusnahanQty), stok: increment(summaryStockChange), updatedAt: serverTimestamp(), warehouseId
         }, { merge: true });
 
         batch.set(doc(db, 'history/yearly/records', `${yearStr}_${internalSkuId}`), {
-          skuId, skuName, year: yearStr, masuk: increment(reversedMasukQty), keluar: increment(reversedKeluarQty), stok: increment(summaryStockChange), updatedAt: serverTimestamp(), warehouseId
+          skuId, skuName, year: yearStr, masuk: increment(reversedMasukQty), keluar: increment(reversedKeluarQty), pemusnahan: increment(reversedPemusnahanQty), stok: increment(summaryStockChange), updatedAt: serverTimestamp(), warehouseId
         }, { merge: true });
       }
 
