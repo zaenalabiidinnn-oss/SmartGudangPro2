@@ -55,6 +55,7 @@ const DataRetur: React.FC = () => {
   const [selectedPcsPerCarton, setSelectedPcsPerCarton] = useState<number>(0);
   const [activeSubTab, setActiveSubTab] = useState<'INPUT' | 'INSPEKSI' | 'HOLD' | 'RUSAK'>('INPUT');
   const [viewMode, setViewMode] = useState<'LOG' | 'SUMMARY'>('LOG');
+  const [showExportMenu, setShowExportMenu] = useState(false);
 
   // Inspection states
   const [inspectingItem, setInspectingItem] = useState<LogEntry | null>(null);
@@ -63,59 +64,106 @@ const DataRetur: React.FC = () => {
   const [selectedCondition, setSelectedCondition] = useState<'BAGUS' | 'RUSAK' | null>(null);
   const [isRepairable, setIsRepairable] = useState<boolean | null>(null);
 
-  const handleExport = () => {
-    let dataToExport: any[] = [];
-    let filename = '';
+  const handleExport = (mode: 'FULL' | 'TEMPLATE' = 'FULL') => {
+    setError('');
+    console.log('handleExport started', { mode, activeSubTab, warehouse: activeWarehouse?.name });
 
-    if (activeSubTab === 'INSPEKSI') {
-      if (viewMode === 'LOG') {
-        dataToExport = logs.map(l => ({
-          'Tanggal': l.date,
-          'SKU ID': l.skuId,
-          'Nama Barang': l.skuName,
-          'Ref Dokumen': l.receiptId,
-          'Alasan': l.reason,
-          'Jumlah (PCS)': l.quantity
-        }));
-        filename = `Riwayat_Retur_${activeWarehouse?.name || 'Gudang'}_${new Date().toISOString().split('T')[0]}.xlsx`;
-      } else {
-        dataToExport = summaryData.map(s => ({
-          'SKU ID': s.skuId,
-          'Nama Barang': s.skuName,
-          'Jumlah Pending Cek (PCS)': s.totalQty,
-          'Frekuensi': s.count
-        }));
-        filename = `Pending_Inspeksi_${activeWarehouse?.name || 'Gudang'}_${new Date().toISOString().split('T')[0]}.xlsx`;
-      }
-    } else if (activeSubTab === 'HOLD') {
-      dataToExport = skus
-        .filter(s => (s.holdStock || 0) > 0)
-        .map(s => ({
-          'SKU ID': s.id,
-          'Nama Barang': s.name,
-          'Stok Hold (PCS)': s.holdStock
-        }));
-      filename = `Stok_Hold_${activeWarehouse?.name || 'Gudang'}_${new Date().toISOString().split('T')[0]}.xlsx`;
-    } else if (activeSubTab === 'RUSAK') {
-      dataToExport = skus
-        .filter(s => (s.brokenStock || 0) > 0)
-        .map(s => ({
-          'SKU ID': s.id,
-          'Nama Barang': s.name,
-          'Stok Rusak (PCS)': s.brokenStock
-        }));
-      filename = `Stok_Rusak_${activeWarehouse?.name || 'Gudang'}_${new Date().toISOString().split('T')[0]}.xlsx`;
-    }
-
-    if (dataToExport.length === 0) {
-      setError('Tidak ada data untuk diekspor');
+    if (!activeWarehouse) {
+      setError('Gudang aktif tidak terdeteksi');
       return;
     }
 
-    const ws = XLSX.utils.json_to_sheet(dataToExport);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "Data");
-    XLSX.writeFile(wb, filename);
+    let dataToExport: any[] = [];
+    let filename = '';
+    const dateStr = new Date().toISOString().split('T')[0];
+
+    if (activeSubTab === 'INSPEKSI') {
+      if (mode === 'TEMPLATE') {
+        dataToExport = [{
+          'Tanggal': dateStr,
+          'SKU ID': 'CONTOH-SKU',
+          'Nama Barang': 'Contoh Barang',
+          'Ref Dokumen': 'REF-001',
+          'Alasan': 'Contoh Alasan',
+          'Jumlah (PCS)': 10
+        }];
+        filename = `Template_Import_Retur_${activeWarehouse.name}.xlsx`;
+      } else {
+        if (viewMode === 'LOG') {
+          dataToExport = logs.map(l => ({
+            'Tanggal': l.date,
+            'SKU ID': l.skuId,
+            'Nama Barang': l.skuName,
+            'Ref Dokumen': l.receiptId,
+            'Alasan': l.reason,
+            'Jumlah (PCS)': l.quantity
+          }));
+          filename = `Riwayat_Retur_${activeWarehouse.name}_${dateStr}.xlsx`;
+        } else {
+          dataToExport = summaryData.map(s => ({
+            'SKU ID': s.skuId,
+            'Nama Barang': s.skuName,
+            'Jumlah Pending Cek (PCS)': s.totalQty,
+            'Frekuensi': s.count
+          }));
+          filename = `Pending_Inspeksi_${activeWarehouse.name}_${dateStr}.xlsx`;
+        }
+      }
+    } else if (activeSubTab === 'HOLD') {
+      if (mode === 'TEMPLATE') {
+        dataToExport = [{
+          'SKU ID': 'CONTOH-SKU',
+          'Nama Barang': 'Contoh Barang',
+          'Stok Hold (PCS)': 0
+        }];
+        filename = `Template_Import_Hold_${activeWarehouse.name}.xlsx`;
+      } else {
+        dataToExport = skus
+          .filter(s => (s.holdStock || 0) > 0)
+          .map(s => ({
+            'SKU ID': s.id,
+            'Nama Barang': s.name,
+            'Stok Hold (PCS)': s.holdStock || 0
+          }));
+        filename = `Stok_Hold_${activeWarehouse.name}_${dateStr}.xlsx`;
+      }
+    } else if (activeSubTab === 'RUSAK') {
+      if (mode === 'TEMPLATE') {
+        dataToExport = [{
+          'SKU ID': 'CONTOH-SKU',
+          'Nama Barang': 'Contoh Barang',
+          'Stok Rusak (PCS)': 0
+        }];
+        filename = `Template_Import_Rusak_${activeWarehouse.name}.xlsx`;
+      } else {
+        dataToExport = skus
+          .filter(s => (s.brokenStock || 0) > 0)
+          .map(s => ({
+            'SKU ID': s.id,
+            'Nama Barang': s.name,
+            'Stok Rusak (PCS)': s.brokenStock || 0
+          }));
+        filename = `Stok_Rusak_${activeWarehouse.name}_${dateStr}.xlsx`;
+      }
+    }
+
+    console.log('Data to export length:', dataToExport.length);
+
+    if (dataToExport.length === 0) {
+      setError(`Tidak ada data ${activeSubTab === 'INSPEKSI' ? 'pending inspeksi' : activeSubTab === 'HOLD' ? 'stok hold' : 'stok rusak'} untuk diekspor`);
+      return;
+    }
+
+    try {
+      const ws = XLSX.utils.json_to_sheet(dataToExport);
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, "Data");
+      XLSX.writeFile(wb, filename);
+      console.log('Export successful');
+    } catch (err) {
+      console.error('Export error:', err);
+      setError('Gagal mengekspor file Excel');
+    }
   };
 
   const handleImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -306,6 +354,24 @@ const DataRetur: React.FC = () => {
 
   return (
     <div className="space-y-8">
+      {/* Global Error Display */}
+      <AnimatePresence>
+        {error && (
+          <motion.div
+            initial={{ opacity: 0, y: -20 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -20 }}
+            className="bg-rose-50 border border-rose-200 text-rose-600 px-6 py-4 rounded-2xl flex items-center gap-3 shadow-sm"
+          >
+            <AlertCircle className="w-5 h-5 flex-shrink-0" />
+            <p className="text-xs font-black uppercase tracking-widest">{error}</p>
+            <button onClick={() => setError('')} className="ml-auto text-rose-400 hover:text-rose-600 p-1">
+              <X className="w-4 h-4" />
+            </button>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* Sub Menu Navigation */}
       <div className="flex flex-wrap items-center justify-between bg-white p-2 rounded-2xl border border-slate-200 shadow-sm gap-2">
         <div className="flex flex-wrap gap-2">
@@ -331,21 +397,76 @@ const DataRetur: React.FC = () => {
         </div>
         <div className="flex items-center gap-2 pr-2">
            {['INSPEKSI', 'HOLD', 'RUSAK'].includes(activeSubTab) && (
-             <>
-               <button
-                 onClick={handleExport}
-                 className="flex items-center gap-2 px-4 py-2 bg-emerald-50 text-emerald-600 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-emerald-100 transition-all border border-emerald-100"
-                 title="Export Data ke Excel"
-               >
-                 <Download className="w-3.5 h-3.5" />
-                 Export
-               </button>
+             <div className="flex items-center gap-2">
+               <div className="relative">
+                 <button
+                   onClick={() => setShowExportMenu(!showExportMenu)}
+                   className="flex items-center gap-2 px-4 py-2 bg-emerald-50 text-emerald-600 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-emerald-100 transition-all border border-emerald-100 shadow-sm"
+                   title="Opsi Export Excel"
+                 >
+                   <Download className="w-3.5 h-3.5" />
+                   Export
+                   <ChevronDown className={`w-3 h-3 transition-transform duration-200 ${showExportMenu ? 'rotate-180' : ''}`} />
+                 </button>
+
+                 <AnimatePresence>
+                   {showExportMenu && (
+                     <>
+                       <div 
+                         className="fixed inset-0 z-[100]" 
+                         onClick={() => setShowExportMenu(false)} 
+                       />
+                       <motion.div
+                         initial={{ opacity: 0, y: 10, scale: 0.95 }}
+                         animate={{ opacity: 1, y: 0, scale: 1 }}
+                         exit={{ opacity: 0, y: 10, scale: 0.95 }}
+                         className="absolute right-0 mt-2 w-48 bg-white rounded-2xl border border-slate-200 shadow-xl z-[101] overflow-hidden"
+                       >
+                         <div className="p-2 space-y-1">
+                           <button
+                             onClick={() => {
+                               handleExport('FULL');
+                               setShowExportMenu(false);
+                             }}
+                             className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-slate-50 rounded-xl transition-colors group"
+                           >
+                             <div className="bg-emerald-50 w-8 h-8 rounded-lg flex items-center justify-center group-hover:bg-emerald-100 transition-colors">
+                               <FileSpreadsheet className="w-4 h-4 text-emerald-600" />
+                             </div>
+                             <div className="flex flex-col">
+                               <span className="text-[10px] font-black text-slate-700 uppercase tracking-tight">Export Data</span>
+                               <span className="text-[8px] font-bold text-slate-400 uppercase tracking-tighter">Dengan Isi Data</span>
+                             </div>
+                           </button>
+                           <button
+                             onClick={() => {
+                               handleExport('TEMPLATE');
+                               setShowExportMenu(false);
+                             }}
+                             className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-slate-50 rounded-xl transition-colors group"
+                             title="Download template untuk diimpor kembali"
+                           >
+                             <div className="bg-indigo-50 w-8 h-8 rounded-lg flex items-center justify-center group-hover:bg-indigo-100 transition-colors">
+                               <Download className="w-4 h-4 text-indigo-600" />
+                             </div>
+                             <div className="flex flex-col">
+                               <span className="text-[10px] font-black text-slate-700 uppercase tracking-tight">Export Template</span>
+                               <span className="text-[8px] font-bold text-slate-400 uppercase tracking-tighter">Header Saja (Untuk Import)</span>
+                             </div>
+                           </button>
+                         </div>
+                       </motion.div>
+                     </>
+                   )}
+                 </AnimatePresence>
+               </div>
+
                <label className="flex items-center gap-2 px-4 py-2 bg-indigo-50 text-indigo-600 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-indigo-100 transition-all border border-indigo-100 cursor-pointer shadow-sm">
                  <Upload className="w-3.5 h-3.5" />
                  Import
                  <input type="file" accept=".xlsx,.xls,.csv" className="hidden" onChange={handleImport} disabled={isProcessing} />
                </label>
-             </>
+             </div>
            )}
            <div className="px-6 hidden xl:block">
               <span className="text-[10px] font-black text-slate-300 uppercase tracking-[0.3em]">Retur Management System</span>
