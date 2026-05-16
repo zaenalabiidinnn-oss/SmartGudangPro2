@@ -444,14 +444,6 @@ const HistoryLogs: React.FC<HistoryLogsProps> = ({ role }) => {
     
     if (isKoreksi) {
       // Logic for correction - usually skip from simple sum
-    } else if (isPemusnahan) {
-      acc.pemusnahanPcs += qty;
-      if (pcsPerCarton > 1) {
-        acc.pemusnahanDusCount += Math.floor(qty / pcsPerCarton);
-        acc.pemusnahanRemPcs += qty % pcsPerCarton;
-      } else {
-        acc.pemusnahanRemPcs += qty;
-      }
     } else if (isPositive) {
       acc.masukPcs += log.quantity;
       if (pcsPerCarton > 1) {
@@ -470,7 +462,7 @@ const HistoryLogs: React.FC<HistoryLogsProps> = ({ role }) => {
       }
     }
     return acc;
-  }, { masukPcs: 0, masukDusCount: 0, masukRemPcs: 0, keluarPcs: 0, keluarDusCount: 0, keluarRemPcs: 0, pemusnahanPcs: 0, pemusnahanDusCount: 0, pemusnahanRemPcs: 0 });
+  }, { masukPcs: 0, masukDusCount: 0, masukRemPcs: 0, keluarPcs: 0, keluarDusCount: 0, keluarRemPcs: 0 });
 
   // Unique lists for dropdowns
   const uniqueItems = Array.from(new Set(logs.map(l => l.skuId))).filter(Boolean).sort();
@@ -1091,14 +1083,8 @@ const HistoryLogs: React.FC<HistoryLogsProps> = ({ role }) => {
                            {stats.keluarRemPcs > 0 && <span className="text-[8px] text-rose-500/70">+ {stats.keluarRemPcs} PCS</span>}
                         </div>
                      </td>
-                     <td className="px-2 py-4 text-center border-r border-white/5 bg-rose-900/60">
+                     <td colSpan={2} className="px-2 py-4 text-center bg-rose-900/60">
                         {stats.keluarPcs.toLocaleString()} PCS
-                     </td>
-                     <td className="px-4 py-4 text-center bg-slate-800 border-l border-white/10">
-                        <div className="flex flex-col">
-                           <span className="text-slate-400">DISPOSE</span>
-                           <span className="text-rose-500">{stats.pemusnahanPcs.toLocaleString()} PCS</span>
-                        </div>
                      </td>
                   </tr>
                </tfoot>

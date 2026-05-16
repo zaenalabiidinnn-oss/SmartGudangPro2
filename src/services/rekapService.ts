@@ -209,8 +209,8 @@ export const processTransaction = async (
 
       if (data.isBrokenStockKeluar) {
         // DISPOSING BROKEN STOCK: Decrement broken stock pool
+        // The user specifically requested that this action is NOT entered and NOT counted in the database menu (logs/history)
         updateData.brokenStock = increment(-totalQuantity);
-        // We still log it as a KELUAR transaction for history purposes
       } else {
         // NORMAL OUTGOING LOGIC (from currentStock)
         updateData.currentStock = increment(-totalQuantity);
@@ -243,19 +243,20 @@ export const processTransaction = async (
         const currentSizeTotal = detailedStock[sizeKey]?.total || 0;
         const newSizeTotal = currentSizeTotal - totalQuantity;
         updateData[`detailedStock.${sizeKey}.boxes`] = usedPcsPerCarton > 1 ? Math.floor(newSizeTotal / usedPcsPerCarton) : 0;
-      }
 
-      logs.push({
-        ...data,
-        quantity: totalQuantity,
-        pcsPerCarton: data.pcsPerCarton ?? skuPcsPerCarton, // Keep original for log record
-        inputMode: (data.pcsPerCarton && data.pcsPerCarton > 1) ? 'CARTON' : 'PCS',
-        skuName,
-        type: logType,
-        createdAt: now,
-        updatedAt: now,
-        warehouseId: data.warehouseId
-      });
+        // Record log for history only for non-disposal transactions
+        logs.push({
+          ...data,
+          quantity: totalQuantity,
+          pcsPerCarton: data.pcsPerCarton ?? skuPcsPerCarton, // Keep original for log record
+          inputMode: (data.pcsPerCarton && data.pcsPerCarton > 1) ? 'CARTON' : 'PCS',
+          skuName,
+          type: logType,
+          createdAt: now,
+          updatedAt: now,
+          warehouseId: data.warehouseId
+        });
+      }
     } else {
       // HANDLE ALL INCOMING-STYLE LOGS (MASUK, RETUR, RESTOCK, KOREKSI)
       const isInbound = logType === 'MASUK' || logType === 'RETUR' || logType === 'RESTOCK' || logType === 'KOREKSI';
@@ -319,11 +320,10 @@ export const processTransaction = async (
       batch.update(skuRef, updateData);
     }
 
-    // 4. Update Summaries (Harian, Bulanan, Tahunan) - Skip if RETUR
-    if (type !== 'RETUR') {
+    // 4. Update Summaries (Harian, Bulanan, Tahunan) - Skip if RETUR or PEMUSNAHAN
+    if (type !== 'RETUR' && !data.isBrokenStockKeluar) {
       const dateStr = data.date; // YYYY-MM-DD
-      // If its disposing broken stock, current stock doesn't change, so qtyChange for summaries should be 0
-      const qtyChange = data.isBrokenStockKeluar ? 0 : (isOutgoing ? -totalQuantity : totalQuantity);
+      const qtyChange = isOutgoing ? -totalQuantity : totalQuantity;
       const monthStr = dateStr.substring(0, 7); // YYYY-MM
       const yearStr = dateStr.substring(0, 4); // YYYY
 
@@ -332,8 +332,7 @@ export const processTransaction = async (
       const yearlyId = `${yearStr}_${internalSkuId}`;
 
       const masukIncr = isOutgoing ? 0 : data.quantity;
-      const keluarIncr = (isOutgoing && !data.isBrokenStockKeluar) ? data.quantity : 0;
-      const pemusnahanIncr = data.isBrokenStockKeluar ? data.quantity : 0;
+      const keluarIncr = isOutgoing ? data.quantity : 0;
 
       // Daily
       batch.set(doc(db, 'history/daily/records', dailyId), {
@@ -342,7 +341,6 @@ export const processTransaction = async (
         date: dateStr,
         masuk: increment(masukIncr),
         keluar: increment(keluarIncr),
-        pemusnahan: increment(pemusnahanIncr),
         stokAkhir: increment(qtyChange),
         updatedAt: now,
         warehouseId: data.warehouseId
@@ -355,7 +353,6 @@ export const processTransaction = async (
         month: monthStr,
         masuk: increment(masukIncr),
         keluar: increment(keluarIncr),
-        pemusnahan: increment(pemusnahanIncr),
         stok: increment(qtyChange),
         updatedAt: now,
         warehouseId: data.warehouseId
@@ -368,7 +365,6 @@ export const processTransaction = async (
         year: yearStr,
         masuk: increment(masukIncr),
         keluar: increment(keluarIncr),
-        pemusnahan: increment(pemusnahanIncr),
         stok: increment(qtyChange),
         updatedAt: now,
         warehouseId: data.warehouseId

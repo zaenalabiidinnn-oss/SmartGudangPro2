@@ -20,7 +20,6 @@ interface HistoricalItem {
   masuk: number;
   keluar: number;
   retur: number;
-  pemusnahan: number;
 }
 
 const StokHarian: React.FC<StokHarianProps> = ({ role }) => {
@@ -73,8 +72,7 @@ const StokHarian: React.FC<StokHarianProps> = ({ role }) => {
           netChange: 0,
           masuk: 0,
           keluar: 0,
-          retur: 0,
-          pemusnahan: 0
+          retur: 0
         };
       });
 
@@ -146,13 +144,7 @@ const StokHarian: React.FC<StokHarianProps> = ({ role }) => {
           if (!hist) return;
           const type = collPath.split('/')[1].toUpperCase();
           if (type === 'MASUK') hist.masuk += data.quantity;
-          if (type === 'KELUAR') {
-            if (data.type === 'PEMUSNAHAN') {
-              hist.pemusnahan += data.quantity;
-            } else {
-              hist.keluar += data.quantity;
-            }
-          }
+          if (type === 'KELUAR') hist.keluar += data.quantity;
           if (type === 'RETUR') hist.retur += data.quantity;
         });
       }
@@ -224,7 +216,6 @@ const StokHarian: React.FC<StokHarianProps> = ({ role }) => {
                 <th className="px-8 py-5">Informasi Barang</th>
                 <th className="px-4 py-5 text-center">Masuk</th>
                 <th className="px-4 py-5 text-center">Keluar</th>
-                <th className="px-4 py-5 text-center">Dispose</th>
                 <th className="px-4 py-5 text-center bg-slate-100/50">Stok Akhir (Pcs)</th>
                 <th className="px-8 py-5 text-center bg-indigo-50 text-indigo-600">Total Stok (Dus + Pcs)</th>
               </tr>
@@ -281,17 +272,6 @@ const StokHarian: React.FC<StokHarianProps> = ({ role }) => {
                               <div className="flex items-center gap-1 text-[8px] font-black text-rose-400 tracking-tighter uppercase">
                                  <ArrowDownLeft className="w-2 h-2" />
                                  <span>Outgoing</span>
-                              </div>
-                           </div>
-                         ) : <span className="text-slate-200 text-xs">-</span>}
-                      </td>
-                      <td className="px-4 py-6 text-center">
-                        {item.pemusnahan > 0 ? (
-                           <div className="flex flex-col items-center">
-                              <span className="text-xs font-black text-slate-500 tabular-nums">-{item.pemusnahan}</span>
-                              <div className="flex items-center gap-1 text-[8px] font-black text-slate-400 tracking-tighter uppercase">
-                                 <AlertCircle className="w-2 h-2" />
-                                 <span>Dispose</span>
                               </div>
                            </div>
                          ) : <span className="text-slate-200 text-xs">-</span>}

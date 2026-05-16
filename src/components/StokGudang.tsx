@@ -934,11 +934,6 @@ const StokGudang: React.FC<StokGudangProps> = ({ role }) => {
                                 HOLD: {(sku.holdStock || 0).toLocaleString()}
                               </span>
                             )}
-                            {(sku.brokenStock || 0) > 0 && (
-                              <span className="bg-rose-100 text-rose-700 px-1.5 py-0.5 rounded text-[8px] font-black uppercase tracking-tighter border border-rose-200 shadow-sm leading-none flex items-center">
-                                RUSAK: {(sku.brokenStock || 0).toLocaleString()}
-                              </span>
-                            )}
                           </div>
                         </div>
                       )}
