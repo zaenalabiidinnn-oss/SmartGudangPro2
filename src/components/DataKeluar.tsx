@@ -23,7 +23,7 @@ const DataKeluar: React.FC = () => {
   // Track selected category pile
   const [selectedCategorySize, setSelectedCategorySize] = useState<number | null>(null);
 
-  const selectedSkuData = skus.find(s => s.id === selectedSku);
+  const selectedSkuData = skus.find(s => s.internalId === selectedSku);
   const existingMultipliers = Array.from(new Set([
     1,
     ...(selectedSkuData?.pcsPerCarton && selectedSkuData.pcsPerCarton > 1 ? [selectedSkuData.pcsPerCarton] : []),
@@ -80,7 +80,7 @@ const DataKeluar: React.FC = () => {
     const unsubSkus = onSnapshot(query(collection(db, 'skus'), where('warehouseId', '==', activeWarehouse.id)), (snap) => {
       setSkus(snap.docs.map(doc => {
         const data = doc.data();
-        return { ...data, id: data.id || doc.id.split('_').slice(1).join('_') } as SKU;
+        return { ...data, internalId: doc.id, id: data.id || doc.id.split('_').slice(1).join('_') } as SKU;
       }));
     }, (error) => {
       console.error("Error fetching skus in DataKeluar:", error);
@@ -146,7 +146,8 @@ const DataKeluar: React.FC = () => {
     setIsProcessing(true);
     try {
       await processTransaction('KELUAR', {
-        skuId: selectedSku,
+        skuId: selectedSkuData?.id || selectedSku,
+        skuName: selectedSkuData?.name,
         quantity,
         receiptId: documentNo,
         reason,
@@ -214,19 +215,16 @@ const DataKeluar: React.FC = () => {
                    <select
                     value={selectedSku}
                     onChange={(e) => {
-                      const skuId = e.target.value;
-                      setSelectedSku(skuId);
+                      const intId = e.target.value;
+                      setSelectedSku(intId);
                     }}
-                    className="w-full px-4 py-3.5 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-4 focus:ring-orange-100 focus:border-orange-400 focus:bg-white outline-none transition-all font-bold text-slate-700 appearance-none"
+                    className="w-full px-4 py-3.5 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-4 focus:ring-orange-100 focus:border-orange-400 focus:bg-white outline-none transition-all font-bold text-slate-700 appearance-none cursor-pointer"
                   >
                     <option value="">-- PILIH BARANG --</option>
                     {skus.map(sku => (
-                      <option key={sku.id} value={sku.id}>{sku.id} &bull; {sku.name} (Isi: {sku.pcsPerCarton || 1})</option>
+                      <option key={sku.internalId} value={sku.internalId}>{sku.id} &bull; {sku.name} (Isi: {sku.pcsPerCarton || 1})</option>
                     ))}
                   </select>
-                  <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-slate-300">
-                    <ExternalLink className="w-4 h-4" />
-                  </div>
                 </div>
               </div>
 

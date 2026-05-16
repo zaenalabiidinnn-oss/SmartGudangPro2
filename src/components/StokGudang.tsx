@@ -39,7 +39,7 @@ const StokGudang: React.FC<StokGudangProps> = ({ role }) => {
     const unsub = onSnapshot(q, (snap) => {
       setSkus(snap.docs.map(doc => {
         const data = doc.data();
-        return { ...data, id: data.id || doc.id.split('_').slice(1).join('_') } as SKU;
+        return { ...data, internalId: doc.id, id: data.id || doc.id.split('_').slice(1).join('_') } as SKU;
       }));
     }, (error) => {
       console.error("Error fetching skus:", error);
@@ -55,7 +55,8 @@ const StokGudang: React.FC<StokGudangProps> = ({ role }) => {
       return;
     }
 
-    const internalId = `${activeWarehouse.id}_${newSKU.id}`;
+    const nameSlug = newSKU.name.toLowerCase().replace(/[^a-z0-9]/g, '-').slice(0, 50);
+    const internalId = `${activeWarehouse.id}_${newSKU.id}_${nameSlug}`;
     const initialStock = newSKU.initialBoxes * newSKU.pcsPerCarton;
     const sizeStr = String(newSKU.pcsPerCarton || 1);
 
@@ -77,6 +78,7 @@ const StokGudang: React.FC<StokGudangProps> = ({ role }) => {
       if (initialStock > 0) {
         await processTransaction('MASUK', {
           skuId: newSKU.id,
+          skuName: newSKU.name,
           quantity: initialStock,
           date: new Date().toISOString().split('T')[0],
           warehouseId: activeWarehouse.id,
@@ -94,14 +96,13 @@ const StokGudang: React.FC<StokGudangProps> = ({ role }) => {
     }
   };
 
-  const deleteSKU = async (id: string) => {
+  const deleteSKU = async (internalId: string) => {
     if (!activeWarehouse) return;
-    const internalId = `${activeWarehouse.id}_${id}`;
     setConfirmDeleteId(null);
-    setIsDeletingSKU(id);
+    setIsDeletingSKU(internalId);
     try {
       await deleteDoc(doc(db, 'skus', internalId));
-      setSelectedIds(prev => prev.filter(i => i !== id));
+      setSelectedIds(prev => prev.filter(i => i !== internalId));
     } catch (err) {
       console.error(err);
       handleFirestoreError(err, OperationType.DELETE, `skus/${internalId}`);
@@ -180,8 +181,7 @@ const StokGudang: React.FC<StokGudangProps> = ({ role }) => {
  
     for (const id of selectedIds) {
       try {
-        const internalId = `${activeWarehouse.id}_${id}`;
-        await deleteDoc(doc(db, 'skus', internalId));
+        await deleteDoc(doc(db, 'skus', id));
         successCount++;
       } catch (err) {
         failCount++;
@@ -203,8 +203,7 @@ const StokGudang: React.FC<StokGudangProps> = ({ role }) => {
     
     for (const sku of filteredSkus) {
       try {
-        const internalId = `${activeWarehouse.id}_${sku.id}`;
-        await deleteDoc(doc(db, 'skus', internalId));
+        await deleteDoc(doc(db, 'skus', sku.internalId!));
       } catch (err) {
         console.error(err);
       }
@@ -217,7 +216,7 @@ const StokGudang: React.FC<StokGudangProps> = ({ role }) => {
     if (selectedIds.length === filteredSkus.length) {
       setSelectedIds([]);
     } else {
-      setSelectedIds(filteredSkus.map(s => s.id));
+      setSelectedIds(filteredSkus.map(s => s.internalId!));
     }
   };
 
@@ -228,7 +227,7 @@ const StokGudang: React.FC<StokGudangProps> = ({ role }) => {
   };
 
   const startEditing = (sku: SKU) => {
-    setEditingSKUId(sku.id);
+    setEditingSKUId(sku.internalId!);
     setEditID(sku.id);
     setEditName(sku.name);
     setEditThreshold(sku.threshold ?? 10);
@@ -239,11 +238,12 @@ const StokGudang: React.FC<StokGudangProps> = ({ role }) => {
     setEditingSKUId(null);
   };
 
-  const handleSave = async (oldId: string) => {
+  const handleSave = async (internalId: string) => {
     if (!activeWarehouse) return;
-    const oldInternalId = `${activeWarehouse.id}_${oldId}`;
-    const newInternalId = `${activeWarehouse.id}_${editID}`;
     
+    const sku = skus.find(s => s.internalId === internalId);
+    if (!sku) return;
+
     // Calculate new currentStock from detailedStock
     const newTotalStock = Object.values(editDetailedStock).reduce((acc, val) => {
       const count = typeof val === 'object' && val !== null ? (val as any).total : Number(val);
@@ -252,6 +252,7 @@ const StokGudang: React.FC<StokGudangProps> = ({ role }) => {
 
     try {
       const updatePayload: any = {
+        id: editID,
         name: editName,
         threshold: editThreshold,
         detailedStock: editDetailedStock,
@@ -259,25 +260,10 @@ const StokGudang: React.FC<StokGudangProps> = ({ role }) => {
         lastUpdated: new Date()
       };
 
-      if (editID !== oldId) {
-        // ID Changed: Check if new ID already exists
-        const existingSku = skus.find(s => s.id === editID);
-        if (existingSku) {
-           window.alert(`SKU dengan kode "${editID}" sudah ada di gudang ini.`);
-           return;
-        }
-
-        // Renaming: set new doc with all data and delete old one
-        await setDoc(doc(db, 'skus', newInternalId), {
-          ...updatePayload,
-          id: editID,
-          warehouseId: activeWarehouse.id
-        });
-        await deleteDoc(doc(db, 'skus', oldInternalId));
-      } else {
-        // No ID change: Simple update
-        await setDoc(doc(db, 'skus', oldInternalId), updatePayload, { merge: true });
-      }
+      // Check if ID or Name changed to see if we should warn about potential (but allowed) duplicates
+      // Actually we just update the document since internalId is the source of truth now.
+      await setDoc(doc(db, 'skus', internalId), updatePayload, { merge: true });
+      
       setEditingSKUId(null);
     } catch (err) {
       console.error(err);
@@ -676,6 +662,16 @@ const StokGudang: React.FC<StokGudangProps> = ({ role }) => {
         </div>
 
         <div className="flex flex-wrap items-center gap-3">
+          <div className="bg-white px-4 py-2.5 rounded-2xl border border-slate-200 shadow-sm flex items-center gap-3 group hover:border-indigo-200 transition-colors cursor-default">
+            <div className="bg-slate-100 w-8 h-8 rounded-lg flex items-center justify-center group-hover:bg-indigo-50 transition-colors">
+              <Package className="w-4 h-4 text-slate-500 group-hover:text-indigo-600" />
+            </div>
+            <div>
+              <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest leading-none mb-1">Total SKU</p>
+              <p className="text-sm font-black text-slate-800">{skus.length}</p>
+            </div>
+          </div>
+
           <div className="relative group min-w-[240px]">
             <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-indigo-600 transition-colors" />
             <input
@@ -685,16 +681,6 @@ const StokGudang: React.FC<StokGudangProps> = ({ role }) => {
               onChange={(e) => setSearch(e.target.value)}
               className="w-full pl-9 pr-4 py-2.5 bg-white border border-slate-200 rounded-2xl focus:ring-4 focus:ring-indigo-100 focus:border-indigo-400 outline-none transition-all font-bold text-xs text-slate-700 placeholder:text-slate-400 shadow-sm"
             />
-          </div>
-
-          <div className="bg-white px-4 py-2.5 rounded-2xl border border-slate-200 shadow-sm flex items-center gap-3 group hover:border-indigo-200 transition-colors cursor-default">
-            <div className="bg-slate-100 w-8 h-8 rounded-lg flex items-center justify-center group-hover:bg-indigo-50 transition-colors">
-              <Package className="w-4 h-4 text-slate-500 group-hover:text-indigo-600" />
-            </div>
-            <div>
-              <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest leading-none mb-1">Total SKU</p>
-              <p className="text-sm font-black text-slate-800">{skus.length}</p>
-            </div>
           </div>
 
           <div className={`bg-white px-4 py-2.5 rounded-2xl border shadow-sm flex items-center gap-3 group transition-all duration-300 ${lowStockSkus.length > 0 ? 'border-red-100 bg-red-50/30' : 'border-slate-200 hover:border-emerald-200'} cursor-default`}>
@@ -716,7 +702,7 @@ const StokGudang: React.FC<StokGudangProps> = ({ role }) => {
               <select
                 value={sortBy}
                 onChange={(e) => setSortBy(e.target.value)}
-                className="px-4 py-3 bg-white border border-slate-200 rounded-xl focus:ring-4 focus:ring-indigo-100 focus:border-indigo-400 outline-none transition-all font-bold text-sm text-slate-700 shadow-sm appearance-none cursor-pointer min-w-[140px] text-center"
+                className="px-4 py-3 bg-white border border-slate-200 rounded-xl focus:ring-4 focus:ring-indigo-100 focus:border-indigo-400 outline-none transition-all font-bold text-sm text-slate-700 shadow-sm appearance-none cursor-pointer min-w-[140px] text-center pr-4"
               >
                 <option value="sku_asc">A - Z (Kode SKU)</option>
                 <option value="sku_desc">Z - A (Kode SKU)</option>
@@ -916,19 +902,19 @@ const StokGudang: React.FC<StokGudangProps> = ({ role }) => {
             <tbody className="divide-y divide-slate-50">
               {filteredSkus.map(sku => {
                 const isLowStock = sku.currentStock <= (sku.threshold ?? 10);
-                const isSelected = selectedIds.includes(sku.id);
-                const isEditing = editingSKUId === sku.id;
+                const isSelected = selectedIds.includes(sku.internalId!);
+                const isEditing = editingSKUId === sku.internalId;
 
                 return (
                   <tr 
-                    key={sku.id} 
+                    key={sku.internalId} 
                     className={`group transition-all duration-200 ${isSelected ? 'bg-indigo-50/30' : 'hover:bg-slate-50/50'}`}
                   >
                     <td className="px-8 py-5">
                       <input 
                         type="checkbox"
                         checked={isSelected}
-                        onChange={() => toggleSelect(sku.id)}
+                        onChange={() => toggleSelect(sku.internalId!)}
                         className="w-4 h-4 rounded-md text-indigo-600 focus:ring-indigo-500 border-slate-300 transition-all cursor-pointer"
                       />
                     </td>
@@ -1085,7 +1071,7 @@ const StokGudang: React.FC<StokGudangProps> = ({ role }) => {
                           {isEditing ? (
                             <>
                               <button
-                                onClick={() => handleSave(sku.id)}
+                                onClick={() => handleSave(sku.internalId!)}
                                 className="p-2 bg-slate-900 text-white rounded-xl hover:bg-black transition-all active:scale-95"
                                 title="Save Changes"
                               >
@@ -1109,7 +1095,7 @@ const StokGudang: React.FC<StokGudangProps> = ({ role }) => {
                                 <Edit2 className="w-4 h-4" />
                               </button>
                               <AnimatePresence mode="wait">
-                                {confirmDeleteId === sku.id ? (
+                                {confirmDeleteId === sku.internalId ? (
                                   <motion.div 
                                     initial={{ opacity: 0, x: 10 }}
                                     animate={{ opacity: 1, x: 0 }}
@@ -1117,7 +1103,7 @@ const StokGudang: React.FC<StokGudangProps> = ({ role }) => {
                                     className="flex items-center gap-1 bg-red-50 p-1 rounded-xl"
                                   >
                                     <button
-                                      onClick={() => deleteSKU(sku.id)}
+                                      onClick={() => deleteSKU(sku.internalId!)}
                                       className="px-3 py-1 bg-red-600 text-white rounded-lg text-[10px] font-black uppercase tracking-widest hover:bg-red-700 transition-all active:scale-95 shadow-lg shadow-red-200"
                                     >
                                       Hapus
@@ -1131,12 +1117,12 @@ const StokGudang: React.FC<StokGudangProps> = ({ role }) => {
                                   </motion.div>
                                 ) : (
                                   <button
-                                    onClick={() => setConfirmDeleteId(sku.id)}
-                                    disabled={isDeletingSKU === sku.id}
+                                    onClick={() => setConfirmDeleteId(sku.internalId!)}
+                                    disabled={isDeletingSKU === sku.internalId}
                                     className="p-2 bg-slate-50 text-slate-400 hover:text-red-600 hover:bg-red-50 border border-slate-100 rounded-xl transition-all active:scale-95 opacity-0 group-hover:opacity-100 translate-x-2 group-hover:translate-x-0 delay-75"
                                     title="Delete Item"
                                   >
-                                    {isDeletingSKU === sku.id ? (
+                                    {isDeletingSKU === sku.internalId ? (
                                       <Loader2 className="w-4 h-4 animate-spin" />
                                     ) : (
                                       <Trash2 className="w-4 h-4" />

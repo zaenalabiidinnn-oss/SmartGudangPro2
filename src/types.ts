@@ -8,7 +8,8 @@ export interface Warehouse {
 export type InputMode = 'PCS' | 'CARTON';
 
 export interface SKU {
-  id: string;
+  id: string; // Logical SKU ID (code)
+  internalId?: string; // Firestore document ID
   name: string;
   currentStock: number;
   returnStock?: number;

@@ -28,9 +28,26 @@ const cleanData = (obj: any) => {
 };
 
 // Helper to find SKU document by trying both prefixed and non-prefixed ID
-const findSku = async (warehouseId: string, skuId: string) => {
+const findSku = async (warehouseId: string, skuId: string, name?: string) => {
   const cleanId = skuId.trim();
-  // 1. Try prefixed ID (Standard format)
+  const cleanName = name?.trim();
+
+  // 1. If name is provided, try searching for the exact combo first
+  if (cleanName) {
+    const q = query(
+      collection(db, 'skus'),
+      where('warehouseId', '==', warehouseId),
+      where('id', '==', cleanId),
+      where('name', '==', cleanName),
+      limit(1)
+    );
+    const snap = await getDocs(q);
+    if (!snap.empty) {
+      return { ref: snap.docs[0].ref, snap: snap.docs[0], internalId: snap.docs[0].id };
+    }
+  }
+
+  // 2. Try prefixed ID (Standard format) - Legacy support
   const logicalId = cleanId.startsWith(warehouseId + '_') 
     ? cleanId.substring(warehouseId.length + 1) 
     : cleanId;
@@ -38,17 +55,30 @@ const findSku = async (warehouseId: string, skuId: string) => {
   
   const ref1 = doc(db, 'skus', internalId);
   const snap1 = await getDoc(ref1);
-  if (snap1.exists()) return { ref: ref1, snap: snap1, internalId };
+  if (snap1.exists()) {
+    // If name was provided but doesn't match this doc, we check if there's any other doc with the same ID but this name
+    // (This part is handled by the first query above, so if we're here, no exact match on name was found)
+    // We return the ID match as a fallback
+    return { ref: ref1, snap: snap1, internalId };
+  }
 
-  // 2. Try raw ID (Legacy or direct format)
+  // 3. Try raw ID (Legacy or direct format)
   const ref2 = doc(db, 'skus', cleanId);
   const snap2 = await getDoc(ref2);
   if (snap2.exists()) {
     const data = snap2.data();
-    // Only accept if warehouseId matches
     if (data.warehouseId === warehouseId) {
       return { ref: ref2, snap: snap2, internalId: cleanId };
     }
+  }
+
+  // 3. Try global search across all warehouses to find name/metadata if not found locally
+  // This helps when an SKU exists in one warehouse but is being introduced to another (e.g. for RETUR)
+  const globalQ = query(collection(db, 'skus'), where('id', '==', logicalId), limit(1));
+  const globalSnap = await getDocs(globalQ);
+  if (!globalSnap.empty) {
+    const globalDoc = globalSnap.docs[0];
+    return { ref: null, snap: globalDoc, internalId, isGlobalMatch: true };
   }
 
   return { ref: null, snap: null, internalId: null };
@@ -58,6 +88,7 @@ export const processTransaction = async (
   type: TransactionType,
   data: {
     skuId: string;
+    skuName?: string;
     quantity: number;
     receiptId?: string;
     reason?: string;
@@ -72,11 +103,59 @@ export const processTransaction = async (
   
   try {
     // 1. SKU document lookup
-    const { ref: skuRef, snap: skuSnap, internalId: internalSkuId } = await findSku(data.warehouseId, data.skuId);
+    let { ref: skuRef, snap: skuSnap, internalId: internalSkuId, isGlobalMatch } = await findSku(data.warehouseId, data.skuId, data.skuName);
+    
+    // Auto-create SKU placeholder if it's an inbound transaction and it exists elsewhere
+    // Or even if it's new, we allow creating it if it's a RETUR/MASUK
+    const isInbound = type === 'MASUK' || type === 'RETUR';
     
     if (!skuRef || !skuSnap || !skuSnap.exists()) {
-      console.error(`[processTransaction] SKU MISSING: ${data.skuId} in warehouse ${data.warehouseId}`);
-      throw new Error('SKU tidak ditemukan di gudang ini');
+      if (isInbound) {
+        // If it's inbound but missing everywhere, we create a placeholder
+        const logicalId = data.skuId.trim().startsWith(data.warehouseId + '_') 
+          ? data.skuId.trim().substring(data.warehouseId.length + 1) 
+          : data.skuId.trim();
+        
+        // Use name from global match if available, otherwise use provided name or ID
+        const nameToUse = data.skuName || (isGlobalMatch && skuSnap ? skuSnap.data().name : logicalId);
+        
+        // Generate a unique internal ID that accounts for name if it's a "new" duplicate SKU ID
+        // We use a slug of the name to keep the ID readable but distinct
+        const nameSlug = nameToUse.toLowerCase().replace(/[^a-z0-9]/g, '-').substring(0, 20);
+        const newInternalId = `${data.warehouseId}_${logicalId}_${nameSlug}`;
+        
+        skuRef = doc(db, 'skus', newInternalId);
+        internalSkuId = newInternalId;
+        
+        const thresholdToUse = isGlobalMatch && skuSnap ? (skuSnap.data().threshold || 10) : 10;
+        const pcsPerCartonToUse = data.pcsPerCarton || (isGlobalMatch && skuSnap ? (skuSnap.data().pcsPerCarton || 1) : 1);
+
+        batch.set(skuRef, {
+          id: logicalId,
+          name: nameToUse,
+          currentStock: 0,
+          threshold: thresholdToUse,
+          pcsPerCarton: pcsPerCartonToUse,
+          detailedStock: { [String(pcsPerCartonToUse)]: { total: 0, boxes: 0 } },
+          createdAt: now,
+          lastUpdated: now,
+          warehouseId: data.warehouseId
+        });
+        
+        // Mock a snapshot for the rest of the function
+        skuSnap = { 
+          exists: () => true, 
+          data: () => ({ 
+            name: nameToUse, 
+            currentStock: 0, 
+            detailedStock: {},
+            pcsPerCarton: pcsPerCartonToUse
+          }) 
+        } as any;
+      } else {
+        console.error(`[processTransaction] SKU MISSING: ${data.skuId} in warehouse ${data.warehouseId}`);
+        throw new Error('SKU tidak ditemukan di gudang ini');
+      }
     }
 
     const skuData = skuSnap.data();
@@ -493,6 +572,7 @@ export const deleteTransaction = async (type: TransactionType, logId: string) =>
 export const inspectRetur = async (
   data: {
     skuId: string;
+    skuName?: string;
     warehouseId: string;
     quantity: number;
     target: 'JUAL' | 'HOLD' | 'RUSAK';
@@ -504,7 +584,7 @@ export const inspectRetur = async (
   const batch = writeBatch(db);
   const now = serverTimestamp();
   
-  const { ref: skuRef, snap: skuSnap, internalId: internalSkuId } = await findSku(data.warehouseId, data.skuId);
+  const { ref: skuRef, snap: skuSnap, internalId: internalSkuId } = await findSku(data.warehouseId, data.skuId, data.skuName);
 
   if (!skuRef || !skuSnap || !skuSnap.exists()) {
     console.error(`[inspectRetur] SKU MISSING: ${data.skuId} in warehouse ${data.warehouseId}`);
@@ -670,6 +750,7 @@ export const inspectRetur = async (
 export const releaseFromHold = async (
   data: {
     skuId: string;
+    skuName?: string;
     warehouseId: string;
     quantity: number;
     reason?: string;
@@ -679,7 +760,7 @@ export const releaseFromHold = async (
   const batch = writeBatch(db);
   const now = serverTimestamp();
   
-  const { ref: skuRef, snap: skuSnap, internalId: internalSkuId } = await findSku(data.warehouseId, data.skuId);
+  const { ref: skuRef, snap: skuSnap, internalId: internalSkuId } = await findSku(data.warehouseId, data.skuId, data.skuName);
 
   if (!skuRef || !skuSnap || !skuSnap.exists()) {
     console.error(`[releaseFromHold] SKU MISSING: ${data.skuId} in warehouse ${data.warehouseId}`);
@@ -756,6 +837,7 @@ export const releaseFromHold = async (
 export const disposeBrokenStock = async (
   data: {
     skuId: string;
+    skuName?: string;
     warehouseId: string;
     quantity: number;
     reason?: string;
@@ -765,6 +847,7 @@ export const disposeBrokenStock = async (
   // But we make it a dedicated helper for the UI
   return processTransaction('KELUAR', {
     skuId: data.skuId,
+    skuName: data.skuName,
     warehouseId: data.warehouseId,
     quantity: data.quantity,
     reason: data.reason || 'Pemusnahan Barang Rusak',
@@ -776,6 +859,7 @@ export const disposeBrokenStock = async (
 export const releaseFromBroken = async (
   data: {
     skuId: string;
+    skuName?: string;
     warehouseId: string;
     quantity: number;
     reason?: string;
@@ -785,7 +869,7 @@ export const releaseFromBroken = async (
   const batch = writeBatch(db);
   const now = serverTimestamp();
   
-  const { ref: skuRef, snap: skuSnap, internalId: internalSkuId } = await findSku(data.warehouseId, data.skuId);
+  const { ref: skuRef, snap: skuSnap, internalId: internalSkuId } = await findSku(data.warehouseId, data.skuId, data.skuName);
 
   if (!skuRef || !skuSnap || !skuSnap.exists()) {
     console.error(`[releaseFromBroken] SKU MISSING: ${data.skuId} in warehouse ${data.warehouseId}`);
@@ -864,6 +948,7 @@ export const importReturLogs = async (
   warehouseId: string,
   records: {
     skuId: string;
+    skuName?: string; // Optional provided name from Excel
     quantity: number;
     receiptId: string;
     date: string;
@@ -874,8 +959,36 @@ export const importReturLogs = async (
   const now = serverTimestamp();
   
   for (const rec of records) {
-    const { ref: skuRef, snap: skuSnap } = await findSku(warehouseId, rec.skuId);
-    if (!skuRef || !skuSnap.exists()) continue;
+    let { ref: skuRef, snap: skuSnap, isGlobalMatch } = await findSku(warehouseId, rec.skuId, rec.skuName);
+    
+    // Auto-create SKU if it doesn't exist yet
+    if (!skuRef || !skuSnap || !skuSnap.exists()) {
+      const logicalId = rec.skuId.trim();
+      
+      const nameToUse = rec.skuName || (isGlobalMatch && skuSnap ? skuSnap.data().name : logicalId);
+      const nameSlug = nameToUse.toLowerCase().replace(/[^a-z0-9]/g, '-').substring(0, 20);
+      const newInternalId = `${warehouseId}_${logicalId}_${nameSlug}`;
+
+      skuRef = doc(db, 'skus', newInternalId);
+      
+      batch.set(skuRef, {
+        id: logicalId,
+        name: nameToUse,
+        currentStock: 0,
+        threshold: 10,
+        pcsPerCarton: 1,
+        detailedStock: { "1": { total: 0, boxes: 0 } },
+        createdAt: now,
+        lastUpdated: now,
+        warehouseId
+      });
+      
+      // Update local snap for logical consistency in remainder of loop
+      skuSnap = { 
+        exists: () => true, 
+        data: () => ({ name: nameToUse }) 
+      } as any;
+    }
 
     const skuData = skuSnap.data();
     const logRef = doc(collection(db, 'history/retur/records'));
@@ -905,6 +1018,7 @@ export const bulkUpdateSpecialStock = async (
   type: 'HOLD' | 'RUSAK',
   records: {
     skuId: string;
+    skuName?: string;
     quantity: number; // The NEW total quantity
   }[]
 ) => {
@@ -912,8 +1026,30 @@ export const bulkUpdateSpecialStock = async (
   const now = serverTimestamp();
   
   for (const rec of records) {
-    const { ref: skuRef, snap: skuSnap } = await findSku(warehouseId, rec.skuId);
-    if (!skuRef || !skuSnap.exists()) continue;
+    let { ref: skuRef, snap: skuSnap, isGlobalMatch } = await findSku(warehouseId, rec.skuId, rec.skuName);
+    
+    // Auto-create SKU if it doesn't exist yet
+    if (!skuRef || !skuSnap || !skuSnap.exists()) {
+      const logicalId = rec.skuId.trim();
+      
+      const nameToUse = rec.skuName || (isGlobalMatch && skuSnap ? skuSnap.data().name : logicalId);
+      const nameSlug = nameToUse.toLowerCase().replace(/[^a-z0-9]/g, '-').substring(0, 20);
+      const newInternalId = `${warehouseId}_${logicalId}_${nameSlug}`;
+
+      skuRef = doc(db, 'skus', newInternalId);
+      
+      batch.set(skuRef, {
+        id: logicalId,
+        name: nameToUse,
+        currentStock: 0,
+        threshold: 10,
+        pcsPerCarton: 1,
+        detailedStock: { "1": { total: 0, boxes: 0 } },
+        createdAt: now,
+        lastUpdated: now,
+        warehouseId
+      });
+    }
 
     const field = type === 'HOLD' ? 'holdStock' : 'brokenStock';
     batch.update(skuRef, {

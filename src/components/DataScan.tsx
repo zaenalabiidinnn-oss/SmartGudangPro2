@@ -72,7 +72,7 @@ const DataScan: React.FC = () => {
     const unsubSkus = onSnapshot(query(collection(db, 'skus'), where('warehouseId', '==', activeWarehouse.id)), (snap) => {
       setSkus(snap.docs.map(doc => {
         const data = doc.data();
-        return { ...data, id: data.id || doc.id.split('_').slice(1).join('_') } as SKU;
+        return { ...data, internalId: doc.id, id: data.id || doc.id.split('_').slice(1).join('_') } as SKU;
       }));
     }, (error) => {
       console.error("Error fetching skus in DataScan:", error);
@@ -139,17 +139,22 @@ const DataScan: React.FC = () => {
 
     setIsProcessing(true);
     try {
+      const selectedSkuData = skus.find(s => s.internalId === selectedSku);
+      const logicalSkuId = selectedSkuData?.id || selectedSku;
+      const skuName = selectedSkuData?.name;
+
       // Check for duplicates (same SKU + same Receipt ID + same Warehouse)
       const qCheck = query(
         collection(db, 'history/keluar/records'),
-        where('skuId', '==', selectedSku),
+        where('skuId', '==', logicalSkuId),
+        where('skuName', '==', skuName),
         where('receiptId', '==', receiptId),
         where('warehouseId', '==', activeWarehouse.id)
       );
       const checkSnap = await getDocs(qCheck);
       
       if (!checkSnap.empty) {
-        const msg = `ITEM DUPLIKAT: SKU ${selectedSku} dengan Resi ${receiptId} sudah pernah di-scan!`;
+        const msg = `ITEM DUPLIKAT: SKU ${logicalSkuId} (${skuName}) dengan Resi ${receiptId} sudah pernah di-scan!`;
         setError(msg);
         window.alert(msg);
         setIsProcessing(false);
@@ -157,7 +162,8 @@ const DataScan: React.FC = () => {
       }
 
       await processTransaction('SCAN', {
-        skuId: selectedSku,
+        skuId: logicalSkuId,
+        skuName: skuName,
         quantity,
         receiptId,
         date: new Date().toISOString().split('T')[0],
@@ -324,11 +330,11 @@ const DataScan: React.FC = () => {
             <select
               value={selectedSku}
               onChange={(e) => setSelectedSku(e.target.value)}
-              className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl outline-none transition-all font-bold text-slate-700 text-sm"
+              className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl outline-none transition-all font-bold text-slate-700 text-sm appearance-none cursor-pointer"
             >
               <option value="">-- PILIH BARANG --</option>
               {skus.map(sku => (
-                <option key={sku.id} value={sku.id}>{sku.id} - {sku.name}</option>
+                <option key={sku.internalId} value={sku.internalId}>{sku.id} - {sku.name}</option>
               ))}
             </select>
           </div>

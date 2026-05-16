@@ -38,7 +38,7 @@ const DataMasuk: React.FC = () => {
 
   const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
 
-  const selectedSkuData = skus.find(s => s.id === selectedSku);
+  const selectedSkuData = skus.find(s => s.internalId === selectedSku);
   const existingMultipliers = Array.from(new Set([
     1,
     ...(selectedSkuData?.pcsPerCarton && selectedSkuData.pcsPerCarton > 1 ? [selectedSkuData.pcsPerCarton] : []),
@@ -100,7 +100,7 @@ const DataMasuk: React.FC = () => {
     const unsubSkus = onSnapshot(query(collection(db, 'skus'), where('warehouseId', '==', activeWarehouse.id)), (snap) => {
       setSkus(snap.docs.map(doc => {
         const data = doc.data();
-        return { ...data, id: data.id || doc.id.split('_').slice(1).join('_') } as SKU;
+        return { ...data, internalId: doc.id, id: data.id || doc.id.split('_').slice(1).join('_') } as SKU;
       }));
     }, (error) => handleFirestoreError(error, OperationType.LIST, 'skus'));
 
@@ -137,7 +137,8 @@ const DataMasuk: React.FC = () => {
     setIsProcessing(true);
     try {
       await processTransaction('MASUK', {
-        skuId: selectedSku,
+        skuId: selectedSkuData?.id || selectedSku,
+        skuName: selectedSkuData?.name,
         quantity,
         receiptId: documentNo,
         date,
@@ -181,14 +182,14 @@ const DataMasuk: React.FC = () => {
                 <select 
                   value={selectedSku} 
                   onChange={(e) => {
-                    const skuId = e.target.value;
-                    setSelectedSku(skuId);
+                    const intId = e.target.value;
+                    setSelectedSku(intId);
                   }} 
-                  className="w-full px-4 py-3 border border-slate-200 rounded-xl font-black text-sm uppercase"
+                  className="w-full px-4 py-3 border border-slate-200 rounded-xl font-black text-sm uppercase appearance-none cursor-pointer"
                 >
                   <option value="">-- [ PILIH ITEM ] --</option>
                   {skus.map(sku => (
-                    <option key={sku.id} value={sku.id}>{sku.id} | {sku.name} (Isi: {sku.pcsPerCarton || 1})</option>
+                    <option key={sku.internalId} value={sku.internalId}>{sku.id} | {sku.name} (Isi: {sku.pcsPerCarton || 1})</option>
                   ))}
                 </select>
               </div>

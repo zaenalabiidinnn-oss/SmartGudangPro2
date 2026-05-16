@@ -37,7 +37,7 @@ const DataRetur: React.FC = () => {
   const [pcsPerCartonOverride, setPcsPerCartonOverride] = useState(0);
   const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
   
-  const selectedSkuData = skus.find(s => s.id === selectedSku);
+  const selectedSkuData = skus.find(s => s.internalId === selectedSku);
   const existingMultipliers = Array.from(new Set([
     1,
     ...(selectedSkuData?.pcsPerCarton && selectedSkuData.pcsPerCarton > 1 ? [selectedSkuData.pcsPerCarton] : []),
@@ -183,6 +183,7 @@ const DataRetur: React.FC = () => {
         if (activeSubTab === 'INSPEKSI') {
           const records = data.map(row => ({
             skuId: String(row['SKU ID'] || row['skuId'] || ''),
+            skuName: String(row['Nama Barang'] || row['skuName'] || ''),
             quantity: Number(row['Jumlah (PCS)'] || row['quantity'] || 0),
             receiptId: String(row['Ref Dokumen'] || row['receiptId'] || 'IMPORT'),
             date: String(row['Tanggal'] || row['date'] || new Date().toISOString().split('T')[0]),
@@ -196,6 +197,7 @@ const DataRetur: React.FC = () => {
           const qtyField = type === 'HOLD' ? 'Stok Hold (PCS)' : 'Stok Rusak (PCS)';
           const records = data.map(row => ({
             skuId: String(row['SKU ID'] || row['skuId'] || ''),
+            skuName: String(row['Nama Barang'] || row['skuName'] || ''),
             quantity: Number(row[qtyField] || row['quantity'] || 0)
           })).filter(r => r.skuId && r.quantity >= 0);
 
@@ -222,7 +224,7 @@ const DataRetur: React.FC = () => {
     const unsubSkus = onSnapshot(query(collection(db, 'skus'), where('warehouseId', '==', activeWarehouse.id)), (snap) => {
       setSkus(snap.docs.map(doc => {
         const data = doc.data();
-        return { ...data, id: data.id || doc.id.split('_').slice(1).join('_') } as SKU;
+        return { ...data, internalId: doc.id, id: data.id || doc.id.split('_').slice(1).join('_') } as SKU;
       }));
     }, (error) => {
       console.error("Error fetching skus in DataRetur:", error);
@@ -277,7 +279,8 @@ const DataRetur: React.FC = () => {
     setIsProcessing(true);
     try {
       await processTransaction('RETUR', {
-        skuId: selectedSku,
+        skuId: selectedSkuData?.id || selectedSku,
+        skuName: selectedSkuData?.name,
         quantity,
         receiptId: documentNo,
         reason: reason ? `[${returType}] ${reason}` : `[${returType}] Tanpa Alasan`,
@@ -306,6 +309,7 @@ const DataRetur: React.FC = () => {
     try {
       await inspectRetur({
         skuId: inspectingItem.skuId,
+        skuName: inspectingItem.skuName,
         quantity: inspectQuantity,
         target,
         warehouseId: activeWarehouse.id,
@@ -530,14 +534,14 @@ const DataRetur: React.FC = () => {
                             required
                             value={selectedSku}
                             onChange={(e) => {
-                              const skuId = e.target.value;
-                              setSelectedSku(skuId);
+                              const intId = e.target.value;
+                              setSelectedSku(intId);
                             }}
-                            className="w-full px-4 py-3.5 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-4 focus:ring-rose-100 focus:border-rose-400 focus:bg-white outline-none transition-all font-bold text-slate-700 appearance-none uppercase"
+                            className="w-full px-4 py-3.5 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-4 focus:ring-rose-100 focus:border-rose-400 focus:bg-white outline-none transition-all font-bold text-slate-700 appearance-none uppercase cursor-pointer"
                           >
                             <option value="">-- PILIH BARANG --</option>
                             {skus.map(sku => (
-                              <option key={sku.id} value={sku.id}>{sku.id} | {sku.name}</option>
+                              <option key={sku.internalId} value={sku.internalId}>{sku.id} | {sku.name}</option>
                             ))}
                           </select>
                         </div>
@@ -1163,6 +1167,7 @@ const DataRetur: React.FC = () => {
                            if (skuAction.type === 'HOLD') {
                               await releaseFromHold({
                                 skuId: skuAction.sku.id,
+                                skuName: skuAction.sku.name,
                                 warehouseId: activeWarehouse.id,
                                 quantity: actionQuantity,
                                 pcsPerCarton: selectedPcsPerCarton
@@ -1170,6 +1175,7 @@ const DataRetur: React.FC = () => {
                            } else if ((skuAction.type as string) === 'RUSAK_RELEASE') {
                               await releaseFromBroken({
                                 skuId: skuAction.sku.id,
+                                skuName: skuAction.sku.name,
                                 warehouseId: activeWarehouse.id,
                                 quantity: actionQuantity,
                                 pcsPerCarton: selectedPcsPerCarton
@@ -1177,6 +1183,7 @@ const DataRetur: React.FC = () => {
                            } else {
                               await disposeBrokenStock({
                                 skuId: skuAction.sku.id,
+                                skuName: skuAction.sku.name,
                                 warehouseId: activeWarehouse.id,
                                 quantity: actionQuantity
                               });
