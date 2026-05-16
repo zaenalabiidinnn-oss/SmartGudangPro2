@@ -20,6 +20,7 @@ import DataMasuk from './components/DataMasuk';
 import DataKeluar from './components/DataKeluar';
 import DataRetur from './components/DataRetur';
 import StokGudang from './components/StokGudang';
+import StokHarian from './components/StokHarian';
 import HistoryLogs from './components/HistoryLogs';
 import UserManagement from './components/UserManagement';
 import { LogIn, LogOut, Loader2, Warehouse, Mail, Lock, User as UserIcon, ArrowRight } from 'lucide-react';
@@ -327,6 +328,7 @@ function AppContent() {
             transition={{ duration: 0.2, ease: "easeOut" }}
           >
             {activeTab === 'STOK' && <StokGudang role={role} />}
+            {activeTab === 'STOK_HARIAN' && <StokHarian role={role} />}
             {activeTab === 'SCAN' && <DataScan />}
             {activeTab === 'MASUK' && <DataMasuk />}
             {activeTab === 'KELUAR' && <DataKeluar />}

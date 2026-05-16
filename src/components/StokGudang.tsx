@@ -6,7 +6,7 @@ import { useWarehouse } from '../contexts/WarehouseContext';
 import { processTransaction } from '../services/rekapService';
 import { SKU } from '../types';
 import { Package, Plus, Trash2, Search, Edit2, Save, X, AlertTriangle, Bell, Loader2, Send, FileDown, Filter } from 'lucide-react';
-import { utils, writeFile } from 'xlsx';
+import { utils, writeFile, read } from 'xlsx';
 import { motion, AnimatePresence } from 'motion/react';
 
 interface StokGudangProps {
@@ -175,7 +175,7 @@ const StokGudang: React.FC<StokGudangProps> = ({ role }) => {
     
     let successCount = 0;
     let failCount = 0;
-
+ 
     for (const id of selectedIds) {
       try {
         const internalId = `${activeWarehouse.id}_${id}`;
@@ -283,68 +283,109 @@ const StokGudang: React.FC<StokGudangProps> = ({ role }) => {
     }
   };
 
+  const downloadTemplate = () => {
+    const worksheet = utils.aoa_to_sheet([["Kode SKU", "Nama Barang", "Stok (PCS)", "Total Dus", "Threshold"]]);
+    const workbook = utils.book_new();
+    utils.book_append_sheet(workbook, worksheet, 'Template SKU');
+    writeFile(workbook, `Template_Input_SKU.xlsx`);
+  };
+
+  const handleImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !activeWarehouse) return;
+
+    const reader = new FileReader();
+    reader.onload = async (evt) => {
+      try {
+        const bstr = evt.target?.result;
+        const wb = read(bstr, { type: 'binary' });
+        const wsname = wb.SheetNames[0];
+        const ws = wb.Sheets[wsname];
+        const data = utils.sheet_to_json(ws) as any[];
+
+        if (data.length === 0) {
+          window.alert("File kosong atau format salah.");
+          return;
+        }
+
+        setIsBulkDeleting(true); // Reuse loading state for progress feedback
+        let importCount = 0;
+
+        for (const row of data) {
+          const skuId = String(row["Kode SKU"] || "").trim().toUpperCase();
+          const name = String(row["Nama Barang"] || "").trim();
+          const threshold = Number(row["Threshold"]) || 10;
+          const initialStock = Number(row["Stok (PCS)"]) || 0;
+          
+          if (!skuId || !name) continue;
+
+          const internalId = `${activeWarehouse.id}_${skuId}`;
+          const pcsPerCarton = 1; // Default for import if not specified
+
+          // 1. Create SKU
+          await setDoc(doc(db, 'skus', internalId), {
+            id: skuId,
+            name: name,
+            currentStock: 0, // Set to 0 then add via transaction if initialStock > 0
+            threshold: threshold,
+            pcsPerCarton: pcsPerCarton,
+            detailedStock: { ["1"]: { total: 0, boxes: 0 } },
+            lastUpdated: new Date(),
+            warehouseId: activeWarehouse.id
+          });
+
+          // 2. Add initial stock via transaction
+          if (initialStock > 0) {
+            await processTransaction('MASUK', {
+              skuId: skuId,
+              quantity: initialStock,
+              date: new Date().toISOString().split('T')[0],
+              warehouseId: activeWarehouse.id,
+              reason: 'Import Awal (Excel)',
+              pcsPerCarton: pcsPerCarton
+            });
+          }
+          importCount++;
+        }
+
+        window.alert(`Berhasil mengimport ${importCount} SKU.`);
+      } catch (err) {
+        console.error(err);
+        window.alert("Gagal membaca file Excel. Pastikan format kolom sesuai template.");
+      } finally {
+        setIsBulkDeleting(false);
+        e.target.value = ""; // Clear input
+      }
+    };
+    reader.readAsBinaryString(file);
+  };
+
   const exportToExcel = () => {
     const itemsToExport = selectedIds.length > 0 
       ? skus.filter(s => selectedIds.includes(s.id))
       : filteredSkus;
 
     if (itemsToExport.length === 0) {
-      window.alert('Tidak ada item untuk diekspor!');
+      downloadTemplate();
+      setShowExportModal(false);
       return;
     }
 
     const dataToExport = itemsToExport.map(sku => {
       const row: any = {};
+      const totalStock = sku.currentStock || 0;
+      const isi = sku.pcsPerCarton || 1;
       
-      // Calculate Total Boxes and breakdown across all package sizes
-      const activeSizes = sku.detailedStock ? Object.entries(sku.detailedStock).filter(([_, val]) => {
-        const totalV = (typeof val === 'object' && val !== null) ? (val as any).total : Number(val);
-        return totalV > 0;
-      }).sort((a, b) => Number(a) - Number(b)) : [];
+      const totalBoxes = isi > 1 ? Math.floor(totalStock / isi) : 0;
+      const remPcs = isi > 1 ? totalStock % isi : totalStock;
 
-      let totalBoxesCount = 0;
-      const descriptions: string[] = [];
-
-      activeSizes.forEach(([sizeStr, val]) => {
-        const size = Number(sizeStr);
-        const isObjV = typeof val === 'object' && val !== null;
-        const totalV = isObjV ? (val as any).total : Number(val);
-        const boxesV = isObjV ? (val as any).boxes : Math.floor(totalV / size);
-        const remV = totalV % size;
-        
-        if (boxesV > 0 || remV > 0) {
-          totalBoxesCount += boxesV;
-          let desc = `${boxesV} Dus (Isi ${size})`;
-          if (remV > 0) {
-            desc += ` + ${remV} Pcs`;
-          }
-          descriptions.push(desc);
-        }
-      });
-
-      // If no detailed stock but has current stock, use default pcsPerCarton
-      if (descriptions.length === 0 && sku.currentStock > 0) {
-        const defaultSize = sku.pcsPerCarton || 1;
-        const boxesV = Math.floor(sku.currentStock / defaultSize);
-        const remV = sku.currentStock % defaultSize;
-        totalBoxesCount = boxesV;
-        
-        if (boxesV > 0 || remV > 0) {
-          let desc = `${boxesV} Dus (Isi ${defaultSize})`;
-          if (remV > 0) {
-            desc += ` + ${remV} Pcs`;
-          }
-          descriptions.push(desc);
-        }
-      }
-
-      const totalDusFormatted = descriptions.length > 0 
-        ? `${totalBoxesCount} Dus Total [${descriptions.join(', ')}]`
-        : '0 Dus';
+      const totalDusFormatted = isi > 1 
+        ? `${totalBoxes} DUS${remPcs > 0 ? ` + ${remPcs} PCS` : ''} (ISI ${isi})`
+        : `${totalStock} PCS (ECERAN)`;
 
       if (exportFields.id) row['Kode SKU'] = sku.id;
       if (exportFields.name) row['Nama Barang'] = sku.name;
-      if (exportFields.currentStock) row['Stok (PCS)'] = sku.currentStock;
+      if (exportFields.currentStock) row['Stok (PCS)'] = totalStock;
       if (exportFields.totalDus) row['Total Dus'] = totalDusFormatted;
       if (exportFields.threshold) row['Threshold'] = sku.threshold ?? 10;
       return row;
@@ -661,9 +702,34 @@ const StokGudang: React.FC<StokGudangProps> = ({ role }) => {
             </button>
 
            <button
+             onClick={downloadTemplate}
+             className="flex items-center gap-2 px-5 py-3 bg-slate-900 text-white rounded-xl font-bold hover:bg-black transition-all active:scale-95 shadow-xl shadow-slate-200"
+             title="Download Template Excel untuk Import"
+           >
+             <FileDown className="w-5 h-5 text-indigo-400" />
+             <span className="hidden sm:inline">Template Import</span>
+           </button>
+
+           <div className="relative">
+             <input
+               type="file"
+               accept=".xlsx, .xls"
+               onChange={handleImport}
+               className="hidden"
+               id="excel-import"
+             />
+             <label
+               htmlFor="excel-import"
+               className="flex items-center gap-2 px-5 py-3 bg-amber-500 text-white rounded-xl font-bold hover:bg-amber-600 transition-all active:scale-95 shadow-xl shadow-amber-100 cursor-pointer"
+             >
+               <FileDown className="w-5 h-5 rotate-180" />
+               <span className="hidden sm:inline">Import Excel</span>
+             </label>
+           </div>
+
+           <button
              onClick={() => setShowExportModal(true)}
-             disabled={filteredSkus.length === 0}
-             className="flex items-center gap-2 px-5 py-3 bg-emerald-600 text-white rounded-xl font-bold hover:bg-emerald-700 transition-all active:scale-95 shadow-xl shadow-emerald-100 disabled:opacity-50 disabled:grayscale"
+             className="flex items-center gap-2 px-5 py-3 bg-emerald-600 text-white rounded-xl font-bold hover:bg-emerald-700 transition-all active:scale-95 shadow-xl shadow-emerald-100"
            >
              <FileDown className="w-5 h-5" />
              <span className="hidden sm:inline">Export Excel</span>
@@ -862,118 +928,93 @@ const StokGudang: React.FC<StokGudangProps> = ({ role }) => {
                         </div>
                       ) : (
                         <span className={`text-lg font-black tabular-nums ${isLowStock ? 'text-red-600' : 'text-slate-800'}`}>
-                          {sku.currentStock}
+                          {sku.currentStock ?? 0}
                         </span>
                       )}
                     </td>
                     <td className="px-4 py-5 text-center">
-                       <div className="flex flex-col items-center gap-1.5 py-1 min-w-[120px]">
-                          {sku.detailedStock && Object.keys(sku.detailedStock).filter(size => {
-                             const val = sku.detailedStock![size];
-                             const total = (typeof val === 'object' && val !== null) ? (val as any).total : Number(val);
-                             return total > 0;
-                          }).length > 0 ? (
-                             (() => {
-                                const activeSizes = Object.entries(sku.detailedStock)
-                                   .filter(([_, val]) => {
-                                      const total = (typeof val === 'object' && val !== null) ? (val as any).total : Number(val);
-                                      return total > 0;
-                                   })
-                                   .sort((a, b) => Number(a) - Number(b));
+                       <div className="flex flex-col items-center gap-1.5 py-1 min-w-[140px]">
+                          {(() => {
+                             // Aggregate logic: Total boxes across all sizes, Total loose pieces
+                             const allPossibleSizes = Array.from(new Set([
+                                1,
+                                Number(sku.pcsPerCarton || 1),
+                                ...(sku.detailedStock ? Object.keys(sku.detailedStock).map(Number) : [])
+                             ]))
+                             .filter(n => n >= 1)
+                             .sort((a, b) => b - a);
 
-                                const totalAllBoxes = activeSizes.reduce((acc, [sizeStr, val]) => {
-                                   const size = Number(sizeStr);
-                                   const isObjV = typeof val === 'object' && val !== null;
-                                   const totalV = isObjV ? (val as any).total : Number(val);
-                                   const boxesV = isObjV ? (val as any).boxes : Math.floor(totalV / size);
-                                   return acc + boxesV;
-                                }, 0);
+                             const totalAllBoxes = allPossibleSizes.reduce((acc, size) => {
+                                if (size <= 1) return acc;
+                                const val = sku.detailedStock ? sku.detailedStock[String(size)] : null;
+                                const totalV = (typeof val === 'object' && val !== null) ? (val as any).total : Number(val || 0);
+                                return acc + Math.floor(totalV / size);
+                             }, 0);
 
-                                const totalAllRem = activeSizes.reduce((acc, [sizeStr, val]) => {
-                                   const size = Number(sizeStr);
-                                   const isObjV = typeof val === 'object' && val !== null;
-                                   const totalV = isObjV ? (val as any).total : Number(val);
-                                   return acc + (totalV % size);
-                                }, 0);
+                             const totalAllRem = allPossibleSizes.reduce((acc, size) => {
+                                const val = sku.detailedStock ? sku.detailedStock[String(size)] : null;
+                                const totalV = (typeof val === 'object' && val !== null) ? (val as any).total : Number(val || 0);
+                                if (size <= 1) return acc + totalV;
+                                return acc + (totalV % size);
+                             }, 0);
 
-                                const selectedSize = displayCartonSize[sku.id] || Number(activeSizes[0][0]);
-                                const val = sku.detailedStock[String(selectedSize)];
-                                const isObj = typeof val === 'object' && val !== null;
-                                const total = isObj ? (val as any).total : Number(val);
-                                const boxes = isObj ? (val as any).boxes : Math.floor(total / Number(selectedSize));
-                                const rem = total % Number(selectedSize);
+                             const selectedSize = displayCartonSize[sku.id] || sku.pcsPerCarton || 1;
+                             const val = sku.detailedStock ? sku.detailedStock[String(selectedSize)] : null;
+                             const isObj = typeof val === 'object' && val !== null;
+                             const totalForSize = isObj ? (val as any).total : Number(val || 0);
+                             const boxesForSize = selectedSize > 1 ? Math.floor(totalForSize / selectedSize) : 0;
+                             const remForSize = selectedSize > 1 ? totalForSize % selectedSize : totalForSize;
 
-                                return (
-                                   <div className="flex flex-col items-center gap-2">
-                                      <div className="bg-white px-3 py-2.5 rounded-2xl border border-slate-200 shadow-sm w-full group-hover:border-indigo-200 group-hover:bg-indigo-50/30 transition-all">
-                                         <div className="flex flex-col items-center">
-                                            <div className="flex items-center justify-center gap-1.5">
-                                               <span className="text-2xl font-black text-slate-900 tabular-nums leading-none group-hover:text-indigo-900">{totalAllBoxes}</span>
-                                               <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest leading-none group-hover:text-indigo-400">TOTAL DUS</span>
-                                            </div>
-                                            {totalAllRem > 0 && (
-                                               <div className="bg-orange-50 px-2 py-0.5 rounded-full border border-orange-100 flex items-center gap-1 mt-1">
-                                                  <span className="w-1 h-1 rounded-full bg-orange-400 animate-pulse"></span>
-                                                  <span className="text-[9px] font-black text-orange-600 uppercase tracking-widest leading-none">+{totalAllRem} PCS SISA</span>
-                                               </div>
-                                            )}
-                                            <div className="text-[8px] font-bold text-slate-300 uppercase tracking-[0.2em] mt-1">Gabungan Semua Isi</div>
+                             return (
+                                <div className="flex flex-col items-center gap-2">
+                                   <div className="bg-white px-3 py-2.5 rounded-2xl border border-slate-200 shadow-sm w-full group-hover:border-indigo-200 group-hover:bg-indigo-50/30 transition-all">
+                                      <div className="flex flex-col items-center">
+                                         <div className="flex items-center justify-center gap-1.5">
+                                            <span className="text-2xl font-black text-slate-900 tabular-nums leading-none group-hover:text-indigo-900">{totalAllBoxes}</span>
+                                            <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest leading-none group-hover:text-indigo-400">DUS</span>
                                          </div>
-                                         
-                                         <div className="mt-2 flex flex-col items-center border-t border-slate-100 pt-2 group-hover:border-indigo-100">
-                                            <div className="text-[9px] font-black text-slate-500 uppercase flex items-center gap-1.5">
-                                               <span className="bg-slate-100 px-1.5 py-0.5 rounded text-slate-600">Isi {selectedSize}</span>
-                                               <span className="text-slate-300">•</span>
-                                               <span className="text-indigo-600">{total.toLocaleString()} PCS</span>
+                                         {totalAllRem > 0 && (
+                                            <div className="bg-orange-50 px-2 py-0.5 rounded-full border border-orange-100 flex items-center gap-1 mt-1">
+                                               <span className="w-1 h-1 rounded-full bg-orange-400 animate-pulse"></span>
+                                               <span className="text-[9px] font-black text-orange-600 uppercase tracking-widest leading-none">+{totalAllRem} PCS SISA</span>
                                             </div>
-                                            {rem > 0 && (
-                                               <div className="text-[8px] font-bold text-orange-600 mt-1 flex items-center justify-center gap-1 bg-orange-50 px-1.5 py-0.5 rounded border border-orange-100">
-                                                  <span className="w-1 h-1 rounded-full bg-orange-400"></span>
-                                                  +{rem} PCS SISA
-                                               </div>
-                                            )}
-                                         </div>
+                                         )}
+                                         <div className="text-[8px] font-bold text-slate-300 uppercase tracking-[0.2em] mt-1 whitespace-nowrap">Total Seluruh Dus</div>
                                       </div>
+                                   </div>
 
-                                      {activeSizes.length > 1 ? (
+                                    {allPossibleSizes.length > 1 && (
+                                      <div className="w-full flex flex-col gap-1">
                                          <select
                                             value={selectedSize}
                                             onChange={(e) => setDisplayCartonSize(prev => ({ ...prev, [sku.id]: Number(e.target.value) }))}
-                                            className="w-full text-[10px] font-black bg-white border border-slate-200 rounded-xl px-2 py-2 text-slate-600 outline-none focus:border-indigo-400 focus:ring-4 focus:ring-indigo-500/10 cursor-pointer shadow-xs hover:bg-slate-50 transition-all text-center uppercase tracking-tighter"
+                                            className="w-full text-[9px] font-black bg-white border border-slate-200 rounded-xl px-2 py-1.5 text-slate-500 outline-none focus:border-indigo-400 cursor-pointer hover:bg-slate-50 transition-all text-center uppercase"
                                          >
-                                            {activeSizes.map(([s, v]) => {
-                                               const isObjOpt = typeof v === 'object' && v !== null;
-                                               const totalOpt = isObjOpt ? (v as any).total : Number(v);
-                                               const boxesOpt = isObjOpt ? (v as any).boxes : Math.floor(totalOpt / Number(s));
+                                            <option value="" disabled>-- LIHAT DETAIL ISI --</option>
+                                            {allPossibleSizes.map(s => {
+                                               const v = sku.detailedStock ? sku.detailedStock[String(s)] : null;
+                                               const totalV = (typeof v === 'object' && v !== null) ? (v as any).total : Number(v || 0);
+                                               const b = s > 1 ? Math.floor(totalV / s) : 0;
+                                               const r = s > 1 ? totalV % s : totalV;
                                                return (
                                                   <option key={s} value={s}>
-                                                    {boxesOpt} DUS (ISI {s} - TOTAL {totalOpt} PCS)
+                                                     {s > 1 
+                                                       ? `ISI ${s} (${b} DUS - ${r} PCS) ${totalV} TOTAL PCS` 
+                                                       : `ECERAN (0 DUS - ${totalV} PCS) ${totalV} TOTAL PCS`}
                                                   </option>
                                                );
                                             })}
                                          </select>
-                                      ) : (
-                                         <span className="text-[9px] font-black text-slate-300 uppercase tracking-widest leading-none">Kemasan Isi {selectedSize}</span>
-                                      )}
-                                   </div>
-                                );
-                             })()
-                          ) : (
-                             <div className="flex flex-col items-center">
-                                <div className="flex items-center gap-1.5">
-                                   <span className="text-base font-black text-slate-900 tabular-nums bg-slate-50 px-3 py-1 rounded-lg border border-slate-100 transition-all group-hover:border-indigo-200 group-hover:bg-indigo-50/50">
-                                     {Math.floor(sku.currentStock / (sku.pcsPerCarton || 1))}
-                                   </span>
-                                   {sku.currentStock % (sku.pcsPerCarton || 1) > 0 && (
-                                     <div className="bg-orange-50 px-1.5 py-1 rounded-lg border border-orange-100 flex flex-col items-center justify-center leading-none">
-                                        <span className="text-[10px] font-black text-orange-600 tabular-nums">+{sku.currentStock % (sku.pcsPerCarton || 1)}</span>
-                                        <span className="text-[6px] font-bold text-orange-400 uppercase tracking-tighter">PCS</span>
-                                     </div>
+                                         <div className="text-[7px] font-bold text-slate-400 uppercase text-center leading-tight">
+                                            {selectedSize > 1 
+                                              ? `GUDANG ISI ${selectedSize}: (${boxesForSize} DUS - ${remForSize} PCS) ${totalForSize} TOTAL PCS`
+                                              : `GUDANG ECERAN: (0 DUS - ${remForSize} PCS) ${totalForSize} TOTAL PCS`}
+                                         </div>
+                                      </div>
                                    )}
                                 </div>
-                                <span className="text-[10px] font-black text-slate-400 mt-1 uppercase tracking-tighter">DUS (ISI {sku.pcsPerCarton || 1})</span>
-                             </div>
-                          )}
+                             );
+                          })()}
                        </div>
                     </td>
                     <td className="px-4 py-5 text-center">

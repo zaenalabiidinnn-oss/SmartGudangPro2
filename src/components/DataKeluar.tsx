@@ -16,14 +16,28 @@ const DataKeluar: React.FC = () => {
   const [quantity, setQuantity] = useState(0);
   const [inputMode, setInputMode] = useState<'PCS' | 'CARTON'>('PCS');
   const [numCartons, setNumCartons] = useState(0);
-  const [pcsPerCartonOverride, setPcsPerCartonOverride] = useState(1);
+  const [extraPcs, setExtraPcs] = useState(0);
+  const [pcsPerCartonOverride, setPcsPerCartonOverride] = useState(0);
   const [reason, setReason] = useState('');
+  
+  // Track selected category pile
+  const [selectedCategorySize, setSelectedCategorySize] = useState<number | null>(null);
+
+  const selectedSkuData = skus.find(s => s.id === selectedSku);
+  const existingMultipliers = Array.from(new Set([
+    1,
+    ...(selectedSkuData?.pcsPerCarton && selectedSkuData.pcsPerCarton > 1 ? [selectedSkuData.pcsPerCarton] : []),
+    ...(selectedSkuData?.detailedStock ? Object.keys(selectedSkuData.detailedStock).map(Number) : [])
+  ]))
+  .filter(n => n >= 1)
+  .sort((a, b) => b - a);
   const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
   const [logs, setLogs] = useState<any[]>([]);
   const [error, setError] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
   const [isDeleting, setIsDeleting] = useState<string | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [viewMode, setViewMode] = useState<'LOG' | 'SUMMARY'>('LOG');
   const [showFilters, setShowFilters] = useState(false);
   const [filters, setFilters] = useState({
     date: '',
@@ -46,6 +60,19 @@ const DataKeluar: React.FC = () => {
 
     return matchesDate && matchesSku && matchesRef && matchesReason;
   });
+
+  const summaryBySku = filteredLogs.reduce((acc, log) => {
+    const key = log.skuId;
+    if (!acc[key]) {
+      acc[key] = { skuId: log.skuId, skuName: log.skuName, totalQty: 0, transactions: 0 };
+    }
+    acc[key].totalQty += log.quantity;
+    acc[key].transactions += 1;
+    return acc;
+  }, {} as Record<string, { skuId: string; skuName: string; totalQty: number; transactions: number }>);
+
+  const summaryData = (Object.values(summaryBySku) as { skuId: string; skuName: string; totalQty: number; transactions: number }[])
+    .sort((a, b) => b.totalQty - a.totalQty);
 
   useEffect(() => {
     if (!activeWarehouse) return;
@@ -125,12 +152,14 @@ const DataKeluar: React.FC = () => {
         reason,
         date,
         warehouseId: activeWarehouse.id,
-        ...(inputMode === 'CARTON' ? { pcsPerCarton: pcsPerCartonOverride } : {})
+        pcsPerCarton: inputMode === 'CARTON' ? (pcsPerCartonOverride || 1) : (selectedCategorySize || 1)
       });
       setDocumentNo('');
       setQuantity(0);
       setNumCartons(0);
+      setExtraPcs(0);
       setReason('');
+      setSelectedCategorySize(null);
     } catch (err) {
       const msg = 'Gagal memproses data keluar.';
       setError(msg);
@@ -187,10 +216,6 @@ const DataKeluar: React.FC = () => {
                     onChange={(e) => {
                       const skuId = e.target.value;
                       setSelectedSku(skuId);
-                      const sku = skus.find(s => s.id === skuId);
-                      if (sku) {
-                        setPcsPerCartonOverride(sku.pcsPerCarton || 1);
-                      }
                     }}
                     className="w-full px-4 py-3.5 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-4 focus:ring-orange-100 focus:border-orange-400 focus:bg-white outline-none transition-all font-bold text-slate-700 appearance-none"
                   >
@@ -205,146 +230,152 @@ const DataKeluar: React.FC = () => {
                 </div>
               </div>
 
-              <div className="space-y-4 pt-2">
-                <div className="flex bg-slate-100 p-1 rounded-xl">
-                  <button
-                    type="button"
-                    onClick={() => setInputMode('PCS')}
-                    className={`flex-1 py-2 text-[10px] font-black uppercase tracking-widest rounded-lg transition-all ${inputMode === 'PCS' ? 'bg-white text-orange-600 shadow-sm' : 'text-slate-400'}`}
-                  >
-                    Pcs (Eceran)
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setInputMode('CARTON')}
-                    className={`flex-1 py-2 text-[10px] font-black uppercase tracking-widest rounded-lg transition-all ${inputMode === 'CARTON' ? 'bg-white text-orange-600 shadow-sm' : 'text-slate-400'}`}
-                  >
-                    Input Dus (Box)
-                  </button>
-                </div>
-
-                {inputMode === 'PCS' ? (
-                  <div className="space-y-4">
-                    <div className="grid grid-cols-5 gap-2 items-end">
-                      <div className="col-span-3 space-y-2">
-                        <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1 block">Unit Pengurangan (PCS)</label>
+                <div className="space-y-4 pt-2">
+                  <div className="flex bg-slate-100 p-1 rounded-xl">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setInputMode('PCS');
+                        setSelectedCategorySize(null);
+                        setQuantity(0);
+                      }}
+                      className={`flex-1 py-2 text-[10px] font-black uppercase rounded-lg transition-all ${inputMode === 'PCS' ? 'bg-white text-orange-600 shadow-sm' : 'text-slate-400'}`}
+                    >
+                      Pcs (Eceran)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setInputMode('CARTON');
+                        setPcsPerCartonOverride(selectedSkuData?.pcsPerCarton || 0);
+                        setQuantity(0);
+                      }}
+                      className={`flex-1 py-2 text-[10px] font-black uppercase rounded-lg transition-all ${inputMode === 'CARTON' ? 'bg-white text-orange-600 shadow-sm' : 'text-slate-400'}`}
+                    >
+                      Input Dus (Box)
+                    </button>
+                  </div>
+                  {inputMode === 'PCS' ? (
+                    <div className="space-y-4">
+                      <div className="space-y-2 text-center">
+                        <label className="text-[10px] font-black uppercase text-slate-400 block">
+                          Jumlah QTY (PCS) {selectedCategorySize && selectedCategorySize > 1 ? `- Source Isi ${selectedCategorySize}` : '- Eceran'}
+                        </label>
                         <input
                           type="number"
                           value={quantity || ''}
                           onChange={(e) => setQuantity(Number(e.target.value))}
                           placeholder="0"
-                          className="w-full px-4 py-4 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-4 focus:ring-orange-100 focus:border-orange-400 focus:bg-white outline-none transition-all font-black text-2xl text-orange-600 placeholder:text-slate-300 text-center"
+                          className="w-full px-4 py-5 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-4 focus:ring-orange-100 focus:border-orange-400 focus:bg-white outline-none transition-all font-black text-3xl text-orange-600 text-center"
                           min="1"
                         />
                       </div>
-                      <div className="col-span-2 space-y-2">
-                        <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1 block">Dari Isi Dus</label>
-                        <select
-                          value={pcsPerCartonOverride}
-                          onChange={(e) => setPcsPerCartonOverride(Number(e.target.value))}
-                          className="w-full px-2 py-4 bg-slate-100 border border-slate-200 rounded-xl focus:border-orange-400 outline-none transition-all font-black text-sm text-slate-600 text-center appearance-none cursor-pointer"
-                        >
-                           {(() => {
-                            const sku = skus.find(s => s.id === selectedSku);
-                            if (!sku) return <option value="0">SKU?</option>;
-                            
-                            const sizes = Array.from(new Set([
-                              sku.pcsPerCarton, 
-                              ...(sku.cartonSizes || []), 
-                              ...Object.keys(sku.detailedStock || {}).map(Number)
-                            ]))
-                            .filter(s => s && s > 0)
-                            .sort((a, b) => a - b);
-                            
-                            return sizes.map(size => {
-                              const stockObj = sku.detailedStock?.[String(size)];
-                              const totalInPool = typeof stockObj === 'object' ? stockObj.total : (stockObj || 0);
-                              return (
-                                <option key={size} value={size}>
-                                  ISI {size} ({totalInPool} Pcs)
-                                </option>
-                              );
-                            });
-                          })()}
-                        </select>
+
+                      {existingMultipliers.length > 0 && (
+                        <div className="space-y-2">
+                          <label className="text-[9px] font-black uppercase tracking-widest text-slate-400 block text-center italic">Pilih Sumber Stok (Isi Terdaftar)</label>
+                          <div className="flex flex-wrap gap-2 justify-center">
+                            {existingMultipliers.map(size => (
+                              <button
+                                key={size}
+                                type="button"
+                                onClick={() => {
+                                  setSelectedCategorySize(size);
+                                }}
+                                className={`px-3 py-1.5 rounded-lg text-[10px] font-black border transition-all ${selectedCategorySize === size || (size === 1 && !selectedCategorySize) ? 'bg-orange-600 border-orange-600 text-white shadow-md' : 'bg-white border-slate-200 text-slate-500 hover:border-orange-300'}`}
+                              >
+                                {size === 1 ? 'ECERAN' : `ISI ${size}`}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="space-y-4">
+                      <div className="grid grid-cols-2 gap-3">
+                        <div className="space-y-2 text-center">
+                          <label className="text-[10px] font-black uppercase text-slate-400">Jml Dus</label>
+                          <input
+                            type="number"
+                            value={numCartons || ''}
+                            onChange={(e) => {
+                              const val = Number(e.target.value);
+                              setNumCartons(val);
+                              setQuantity((val * (pcsPerCartonOverride || 0)) + extraPcs);
+                            }}
+                            placeholder="0"
+                            className="w-full px-4 py-4 bg-slate-50 border border-slate-200 rounded-xl focus:border-orange-500 focus:bg-white transition-all font-black text-2xl text-orange-600 text-center"
+                          />
+                        </div>
+                        <div className="space-y-2 text-center">
+                          <label className="text-[10px] font-black uppercase text-slate-400">Pcs Sisa</label>
+                          <input
+                            type="number"
+                            value={extraPcs || ''}
+                            onChange={(e) => {
+                              const val = Number(e.target.value);
+                              setExtraPcs(val);
+                              setQuantity((numCartons * (pcsPerCartonOverride || 0)) + val);
+                            }}
+                            placeholder="0"
+                            className="w-full px-4 py-4 bg-slate-50 border border-slate-200 rounded-xl focus:border-orange-500 focus:bg-white transition-all font-black text-2xl text-orange-600 text-center"
+                          />
+                        </div>
+                      </div>
+
+                      {existingMultipliers.length > 0 && (
+                        <div className="space-y-2">
+                          <label className="text-[9px] font-black uppercase tracking-widest text-slate-400 block text-center italic">Pilih Isi Terdaftar</label>
+                          <div className="flex flex-wrap gap-2 justify-center">
+                            {existingMultipliers.map(size => (
+                              <button
+                                key={size}
+                                type="button"
+                                onClick={() => {
+                                  setPcsPerCartonOverride(size);
+                                  const newNum = numCartons === 0 ? 1 : numCartons;
+                                  if (numCartons === 0) setNumCartons(1);
+                                  setQuantity((newNum * size) + extraPcs);
+                                }}
+                                className={`px-3 py-1.5 rounded-lg text-[10px] font-black border transition-all ${pcsPerCartonOverride === size ? 'bg-orange-600 border-orange-600 text-white shadow-md' : 'bg-white border-slate-200 text-slate-500 hover:border-orange-300'}`}
+                              >
+                                {size === 1 ? 'ECERAN' : `ISI ${size}`}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      <div className="space-y-2 text-center bg-slate-50 p-4 rounded-2xl border border-slate-100">
+                        <label className="text-[10px] font-black uppercase text-slate-400">Isi Per Dus (Multiplier)</label>
+                        <input
+                          type="number"
+                          value={pcsPerCartonOverride || ''}
+                          onChange={(e) => {
+                            const val = Number(e.target.value);
+                            setPcsPerCartonOverride(val);
+                            setQuantity((numCartons * (val || 0)) + extraPcs);
+                          }}
+                          placeholder="Default SKU"
+                          className="w-full px-4 py-3 bg-white border border-slate-200 rounded-xl focus:border-orange-500 outline-none transition-all font-black text-xl text-orange-600 text-center"
+                        />
                       </div>
                     </div>
-                    <div className="flex justify-center -mt-2">
-                       <span className="text-[8px] font-black text-slate-300 uppercase tracking-widest border-t border-slate-50 pt-2 px-4 italic text-center">
-                         * Akan dikurangi dari pool isi {pcsPerCartonOverride} terlebih dahulu
-                       </span>
+                  )}
+                </div>
+                {quantity > 0 && (
+                  <div className="pt-2 animate-in fade-in slide-in-from-top-2 duration-300">
+                    <div className="bg-orange-50/50 rounded-2xl border border-orange-100 p-4 text-center">
+                      <p className="text-[10px] font-black text-orange-400 uppercase tracking-widest mb-1">Total Keluar</p>
+                      <p className="text-xl font-black text-orange-600 tabular-nums">
+                        {inputMode === 'CARTON' 
+                          ? `${numCartons} DUS ${extraPcs > 0 ? `+ ${extraPcs} PCS` : ''} (ISI ${pcsPerCartonOverride})` 
+                          : `${quantity.toLocaleString()} PCS`}
+                      </p>
                     </div>
-                  </div>
-                ) : (
-                  <div className="grid grid-cols-2 gap-3">
-                    <div className="space-y-2 text-center">
-                      <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Jml Dus</label>
-                      <input
-                        type="number"
-                        value={numCartons || ''}
-                        onChange={(e) => {
-                          const val = Number(e.target.value);
-                          setNumCartons(val);
-                          setQuantity(val * pcsPerCartonOverride);
-                        }}
-                        placeholder="0"
-                        className="w-full px-4 py-4 bg-slate-50 border border-slate-200 rounded-xl focus:border-orange-500 focus:bg-white transition-all font-black text-2xl text-orange-600 text-center"
-                      />
-                    </div>
-                    <div className="space-y-2 text-center">
-                      <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Isi Dus (POOL)</label>
-                      <select
-                        value={pcsPerCartonOverride || ''}
-                        onChange={(e) => {
-                          const val = Number(e.target.value);
-                          setPcsPerCartonOverride(val);
-                          setQuantity(numCartons * val);
-                        }}
-                        className="w-full px-4 py-4 bg-slate-50 border border-slate-200 rounded-xl focus:border-orange-500 focus:bg-white transition-all font-black text-xl text-orange-600 text-center appearance-none shadow-sm cursor-pointer"
-                      >
-                        {(() => {
-                          const sku = skus.find(s => s.id === selectedSku);
-                          if (!sku) return <option value="0">PILIH SKU</option>;
-                          
-                          const sizes = Array.from(new Set([
-                            sku.pcsPerCarton, 
-                            ...(sku.cartonSizes || []), 
-                            ...Object.keys(sku.detailedStock || {}).map(Number)
-                          ]))
-                          .filter(s => s && s > 0)
-                          .sort((a, b) => a - b);
-                          
-                          if (sizes.length === 0) return <option value={sku.pcsPerCarton || 1}>ISI {sku.pcsPerCarton || 1}</option>;
-                          
-                          return sizes.map(size => {
-                            const stockObj = sku.detailedStock?.[String(size)];
-                            const totalInPool = typeof stockObj === 'object' ? stockObj.total : (stockObj || 0);
-                            const boxesInPool = Math.floor(totalInPool / size);
-                            return (
-                              <option key={size} value={size}>
-                                ISI {size} &nbsp; ({boxesInPool} Dus Ready)
-                              </option>
-                            );
-                          });
-                        })()}
-                      </select>
-                    </div>
-                    {numCartons > 0 && (
-                      <div className="col-span-2 text-center -mt-1">
-                        <span className="text-[11px] font-black text-orange-600/50 uppercase tracking-[0.2em] italic">
-                          Total: {quantity} PCS
-                        </span>
-                      </div>
-                    )}
                   </div>
                 )}
-                
-                {selectedSku && quantity > 0 && inputMode === 'PCS' && (
-                  <div className="hidden">
-                    {/* Handled automatically */}
-                  </div>
-                )}
-              </div>
 
               <div className="space-y-2">
                 <div className="flex items-center justify-between ml-1">
@@ -399,7 +430,17 @@ const DataKeluar: React.FC = () => {
       <div className="xl:col-span-8 flex flex-col min-h-[600px]">
         <div className="bg-white rounded-[2.5rem] border border-slate-200 shadow-2xl shadow-slate-200/30 overflow-hidden flex flex-col h-full">
           <div className="p-8 border-b border-slate-100 bg-slate-50/50 flex items-center justify-between">
-            <h3 className="text-sm font-black text-slate-500 uppercase tracking-widest">Special Withdrawal Audit</h3>
+            <div className="flex bg-slate-100/50 p-1 rounded-xl">
+              {['LOG', 'SUMMARY'].map(mode => (
+                <button 
+                  key={mode} 
+                  onClick={() => setViewMode(mode as any)} 
+                  className={`px-6 py-2 text-[10px] font-black uppercase rounded-lg transition-all ${viewMode === mode ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-400'}`}
+                >
+                  {mode}
+                </button>
+              ))}
+            </div>
             
             <div className="flex items-center gap-4">
               {Object.values(filters).some(v => v !== '') && (
@@ -421,150 +462,165 @@ const DataKeluar: React.FC = () => {
                 <Filter className="w-3 h-3" />
                 Filter {Object.values(filters).filter(v => v !== '').length > 0 && `(${Object.values(filters).filter(v => v !== '').length})`}
               </button>
-              <div className="bg-orange-100 text-orange-600 px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest leading-none">
-                Audited
-              </div>
             </div>
           </div>
           
           <div className="overflow-x-auto">
-            <table className="w-full text-left">
-              <thead>
-                <tr className="bg-slate-50/50 text-slate-400 text-[10px] uppercase font-black tracking-widest border-b border-slate-100">
-                  <th className="px-8 py-5">Date</th>
-                  <th className="px-6 py-5">Inventory Details</th>
-                  <th className="px-6 py-5">Reason & Evidence</th>
-                  <th className="px-6 py-5 text-center">Carton/Dus</th>
-                  <th className="px-8 py-5 text-right w-20">Aksi</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-50">
-                <AnimatePresence mode="popLayout" initial={false}>
-                  {filteredLogs.length === 0 ? (
-                    <tr>
-                       <td colSpan={5} className="py-32 text-center">
+            {viewMode === 'LOG' ? (
+              <table className="w-full text-left">
+                <thead>
+                  <tr className="bg-slate-50/50 text-slate-400 text-[10px] uppercase font-black tracking-widest border-b border-slate-100">
+                    <th className="px-8 py-5">Tanggal</th>
+                    <th className="px-6 py-5">Detail Barang</th>
+                    <th className="px-6 py-5">Keterangan</th>
+                    <th className="px-6 py-5 text-center">Carton/Dus</th>
+                    <th className="px-8 py-5 text-right w-20">Aksi</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-50">
+                  <AnimatePresence mode="popLayout" initial={false}>
+                    {filteredLogs.length === 0 ? (
+                      <tr>
+                         <td colSpan={5} className="py-32 text-center">
+                            <div className="flex flex-col items-center justify-center">
+                               <ExternalLink className="w-16 h-16 mb-4 text-slate-100" />
+                               <p className="font-bold text-slate-400 uppercase tracking-widest text-xs">Data Tidak Ditemukan</p>
+                            </div>
+                         </td>
+                      </tr>
+                    ) : filteredLogs.map((log) => (
+                      <motion.tr
+                        key={log.id}
+                        layout
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        exit={{ opacity: 0 }}
+                        className="group hover:bg-slate-50/30 transition-all duration-200"
+                      >
+                        <td className="px-8 py-6 whitespace-nowrap">
+                          <span className="text-xs font-black text-slate-900">{log.date}</span>
+                        </td>
+                        <td className="px-6 py-6">
+                           <div className="flex flex-col">
+                             <span className="text-sm font-black text-slate-900 group-hover:text-orange-600 transition-colors uppercase mb-1 leading-none">{log.skuName}</span>
+                             <span className="text-[10px] font-black font-mono text-slate-400 tracking-widest leading-none">{log.skuId}</span>
+                           </div>
+                        </td>
+                        <td className="px-6 py-6 max-w-xs">
+                           <div className="flex flex-col gap-1">
+                             <span className="text-xs font-bold text-slate-600 leading-relaxed">{log.reason}</span>
+                             <span className="text-[10px] font-bold text-slate-400 uppercase tracking-tighter">Ref: {log.receiptId || "-"}</span>
+                           </div>
+                        </td>
+                        <td className="px-6 py-6 text-center">
                           <div className="flex flex-col items-center justify-center">
-                             <ExternalLink className="w-16 h-16 mb-4 text-slate-100" />
-                             <p className="font-bold text-slate-400 uppercase tracking-widest text-xs">Data Tidak Ditemukan</p>
-                             {Object.values(filters).some(v => v !== '') && (
-                                <button 
-                                  onClick={() => setFilters({ date: '', skuId: '', receiptId: '', reason: '' })}
-                                  className="mt-4 text-orange-600 font-bold hover:underline text-[10px] uppercase tracking-widest"
-                                >
-                                  Reset Semua Filter
-                                </button>
-                             )}
-                          </div>
-                       </td>
-                    </tr>
-                  ) : filteredLogs.map((log) => (
-                    <motion.tr
-                      key={log.id}
-                      layout
-                      initial={{ opacity: 0, x: 20 }}
-                      animate={{ opacity: 1, x: 0 }}
-                      exit={{ opacity: 0, scale: 0.9 }}
-                      className="group hover:bg-slate-50/30 transition-all duration-200"
-                    >
-                      <td className="px-8 py-6 whitespace-nowrap">
-                        <span className="text-xs font-black text-slate-900 bg-slate-100 px-3 py-1.5 rounded-lg border border-slate-200/50 shadow-sm">{log.date}</span>
-                      </td>
-                      <td className="px-6 py-6">
-                         <div className="flex flex-col">
-                           <span className="text-sm font-black text-slate-900 group-hover:text-orange-600 transition-colors uppercase mb-1 leading-none">{log.skuName}</span>
-                           <span className="text-[10px] font-black font-mono text-slate-400 tracking-widest leading-none">{log.skuId}</span>
-                         </div>
-                      </td>
-                      <td className="px-6 py-6 max-w-xs">
-                         <div className="flex flex-col gap-1">
-                           <span className="text-xs font-bold text-orange-800 italic leading-relaxed">"{log.reason}"</span>
-                           <span className="text-[10px] font-bold text-slate-400 uppercase tracking-tighter">Ref: {log.receiptId || "NO-REF"}</span>
-                         </div>
-                      </td>
-                      <td className="px-6 py-6 text-center">
-                        <div className="flex flex-col items-center justify-center">
-                           {(() => {
-                              const sku = skus.find(s => s.id === log.skuId);
-                              const perCarton = log.pcsPerCarton || sku?.pcsPerCarton || 1;
+                             {(() => {
+                                const sku = skus.find(s => s.id === log.skuId);
+                                const perCarton = log.pcsPerCarton || sku?.pcsPerCarton || 1;
 
-                              if (log.inputMode === 'PCS') {
+                                if (perCarton <= 1 || log.inputMode === 'PCS') {
+                                  return (
+                                    <div className="flex flex-col items-center">
+                                      <span className="text-[10px] font-black text-orange-600 bg-orange-50 px-2 py-1 rounded border border-orange-100 uppercase tracking-widest">
+                                        0 DUS
+                                      </span>
+                                      <span className="text-[8px] font-bold text-orange-500 uppercase mt-0.5 tabular-nums">
+                                        - {log.quantity} PCS
+                                      </span>
+                                    </div>
+                                  );
+                                }
+
+                                const dus = Math.floor(log.quantity / perCarton);
+                                const sisa = log.quantity % perCarton;
                                 return (
                                   <div className="flex flex-col items-center">
-                                    <div className="bg-orange-50 text-orange-600 px-4 py-2 rounded-2xl font-black text-xl border border-orange-100 shadow-sm flex items-center tabular-nums">
-                                       <span className="text-[12px] mr-1 font-bold">-</span>
-                                       {log.quantity} <span className="text-[10px] ml-1 opacity-60">PCS</span>
-                                    </div>
-                                    <div className="flex flex-col items-center mt-1">
-                                      <span className="text-[8px] font-black bg-orange-100 text-orange-600 px-2 py-0.5 rounded-full border border-orange-200 uppercase tracking-tighter">
-                                        Eceran
-                                      </span>
-                                      <span className="text-[8px] font-bold text-slate-300 uppercase tracking-tighter mt-1">
-                                        (Dari Isian {perCarton} - Stok Terendah)
-                                      </span>
-                                    </div>
-                                  </div>
-                                );
-                              }
-
-                              const dus = Math.floor(log.quantity / perCarton);
-                              const sisa = log.quantity % perCarton;
-                              return (
-                                <>
-                                  <div className="bg-orange-50 text-orange-600 px-3 py-2 rounded-2xl font-black text-xl border border-orange-100 shadow-sm flex items-center gap-1">
-                                     <span className="text-xs">-</span>
-                                     {dus} <span className="text-[10px] ml-0.5 opacity-60">DUS</span>
-                                  </div>
-                                  <div className="flex flex-col items-center mt-1">
+                                    <span className="text-[10px] font-black text-orange-600 bg-orange-50 px-2 py-1 rounded border border-orange-100 uppercase tracking-widest">
+                                      - {dus} DUS
+                                    </span>
                                     {sisa > 0 && (
-                                      <span className="text-[9px] font-black text-orange-500 uppercase tracking-widest leading-none">
+                                      <span className="text-[8px] font-bold text-orange-500 uppercase mt-0.5 tabular-nums">
                                         - {sisa} PCS
                                       </span>
                                     )}
-                                    <span className="text-[8px] font-bold text-slate-400 uppercase tracking-tighter mt-0.5">
-                                      Total: {log.quantity} PCS
-                                      {log.pcsPerCarton && log.pcsPerCarton !== sku?.pcsPerCarton && ` (Isi ${log.pcsPerCarton})`}
+                                    <span className="text-[7px] font-bold text-slate-400 uppercase tracking-tighter mt-0.5 leading-none shadow-sm">
+                                      Total: {log.quantity} PCS (Isi {perCarton})
                                     </span>
                                   </div>
-                                </>
-                              );
-                           })()}
-                        </div>
-                      </td>
-                      <td className="px-8 py-6 text-right">
-                          {confirmDeleteId === log.id ? (
-                            <motion.div 
-                              initial={{ opacity: 0, scale: 0.8 }}
-                              animate={{ opacity: 1, scale: 1 }}
-                              className="flex items-center justify-end gap-1"
-                            >
-                              <button
-                                onClick={() => handleDelete(log.id)}
-                                className="w-8 h-8 flex items-center justify-center bg-red-600 text-white rounded-lg shadow-lg"
-                              >
-                                <Trash2 className="w-3.5 h-3.5" />
-                              </button>
-                              <button
-                                onClick={() => setConfirmDeleteId(null)}
-                                className="w-8 h-8 flex items-center justify-center bg-slate-200 text-slate-600 rounded-lg"
-                              >
-                                <span className="text-[10px] font-black uppercase">X</span>
-                              </button>
-                            </motion.div>
-                          ) : (
-                            <button
-                              onClick={() => setConfirmDeleteId(log.id)}
-                              disabled={isDeleting === log.id}
-                              className="w-10 h-10 flex items-center justify-center text-slate-200 hover:text-red-500 hover:bg-red-50 rounded-2xl transition-all opacity-0 group-hover:opacity-100 disabled:opacity-20"
-                            >
-                              <Trash2 className="w-4 h-4" />
-                            </button>
-                          )}
+                                );
+                             })()}
+                          </div>
                         </td>
-                    </motion.tr>
-                  ))}
-                </AnimatePresence>
-              </tbody>
-            </table>
+                        <td className="px-8 py-6 text-right">
+                            {confirmDeleteId === log.id ? (
+                              <motion.div 
+                                initial={{ opacity: 0, scale: 0.8 }}
+                                animate={{ opacity: 1, scale: 1 }}
+                                className="flex items-center justify-end gap-1"
+                              >
+                                <button
+                                  onClick={() => handleDelete(log.id)}
+                                  className="w-8 h-8 flex items-center justify-center bg-red-600 text-white rounded-lg shadow-lg"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                                <button
+                                  onClick={() => setConfirmDeleteId(null)}
+                                  className="w-8 h-8 flex items-center justify-center bg-slate-200 text-slate-600 rounded-lg"
+                                >
+                                  <span className="text-[10px] font-black uppercase text-xs">X</span>
+                                </button>
+                              </motion.div>
+                            ) : (
+                              <button
+                                onClick={() => setConfirmDeleteId(log.id)}
+                                disabled={isDeleting === log.id}
+                                className="w-10 h-10 flex items-center justify-center text-slate-200 hover:text-red-500 hover:bg-red-50 rounded-2xl transition-all opacity-0 group-hover:opacity-100 disabled:opacity-20"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                            )}
+                          </td>
+                      </motion.tr>
+                    ))}
+                  </AnimatePresence>
+                </tbody>
+              </table>
+            ) : (
+              <div className="p-8">
+                <table className="w-full text-left">
+                  <thead className="text-slate-400 text-[10px] uppercase font-black tracking-widest border-b border-slate-100">
+                    <tr>
+                      <th className="px-4 py-4">Inventory Detail</th>
+                      <th className="px-4 py-4 text-center">Frek. Keluar</th>
+                      <th className="px-4 py-4 text-right">Total Keluar</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-50">
+                    {summaryData.map(item => (
+                      <tr key={item.skuId} className="hover:bg-slate-50 group transition-colors">
+                        <td className="px-4 py-6">
+                          <div className="flex flex-col">
+                            <span className="text-sm font-black text-slate-900 group-hover:text-orange-600 uppercase transition-colors">{item.skuName}</span>
+                            <span className="text-[10px] font-black text-slate-300 font-mono tracking-widest">#{item.skuId}</span>
+                          </div>
+                        </td>
+                        <td className="px-4 py-6 text-center">
+                          <span className="bg-slate-100 text-slate-500 px-2 py-1 rounded-lg text-[10px] font-black uppercase border border-slate-200/50">
+                            {item.transactions} X Record
+                          </span>
+                        </td>
+                        <td className="px-4 py-6 text-right">
+                          <span className="text-orange-600 font-black text-xl tabular-nums">
+                            -{item.totalQty.toLocaleString()} <span className="text-[10px] ml-1 opacity-50">PCS</span>
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
         </div>
       </div>

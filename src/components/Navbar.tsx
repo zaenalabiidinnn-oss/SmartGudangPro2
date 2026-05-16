@@ -1,5 +1,5 @@
 import React from 'react';
-import { LayoutDashboard, Scan, Download, ExternalLink, History, LogOut, User as UserIcon, Warehouse, Users, RotateCcw } from 'lucide-react';
+import { LayoutDashboard, Scan, Download, ExternalLink, History, LogOut, User as UserIcon, Warehouse, Users, RotateCcw, Calendar } from 'lucide-react';
 import { User } from 'firebase/auth';
 import { useWarehouse } from '../contexts/WarehouseContext';
 
@@ -14,9 +14,33 @@ interface NavbarProps {
 
 const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab, user, role, isMasterAdmin, onLogout }) => {
   const { activeWarehouse } = useWarehouse();
+  const menuRef = React.useRef<HTMLDivElement>(null);
+
+  const handleMouseDown = (e: React.MouseEvent) => {
+    const ele = menuRef.current;
+    if (!ele) return;
+    const startPos = {
+      left: ele.scrollLeft,
+      x: e.clientX,
+    };
+
+    const handleMouseMove = (e: MouseEvent) => {
+      const dx = e.clientX - startPos.x;
+      ele.scrollLeft = startPos.left - dx;
+    };
+
+    const handleMouseUp = () => {
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+    };
+
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
+  };
 
   const tabs = [
     { id: 'STOK', label: 'Stok Gudang', icon: LayoutDashboard, color: 'text-indigo-600', bg: 'bg-indigo-50' },
+    { id: 'STOK_HARIAN', label: 'Stok Harian', icon: Calendar, color: 'text-violet-600', bg: 'bg-violet-50' },
     { id: 'SCAN', label: 'Data Scan', icon: Scan, color: 'text-blue-600', bg: 'bg-blue-50' },
     { id: 'MASUK', label: 'Data Masuk', icon: Download, color: 'text-emerald-600', bg: 'bg-emerald-50' },
     { id: 'KELUAR', label: 'Data Keluar', icon: ExternalLink, color: 'text-orange-600', bg: 'bg-orange-50' },
@@ -67,7 +91,11 @@ const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab, user, role, is
             </div>
           </div>
           
-          <div className="hidden md:flex gap-1">
+          <div 
+            ref={menuRef}
+            onMouseDown={handleMouseDown}
+            className="hidden md:flex gap-1 overflow-x-auto no-scrollbar max-w-[calc(100vw-500px)] flex-nowrap items-center px-2 cursor-grab active:cursor-grabbing select-none"
+          >
             {visibleTabs.map((tab) => {
               const isActive = activeTab === tab.id;
 
@@ -75,9 +103,9 @@ const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab, user, role, is
                 <button
                   key={tab.id}
                   onClick={() => setActiveTab(tab.id)}
-                  className={`group relative flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-bold transition-all duration-200 ${
+                  className={`group relative flex items-center gap-2 px-4 py-2.5 rounded-xl text-[13px] font-black uppercase tracking-tight transition-all duration-200 whitespace-nowrap flex-shrink-0 cursor-pointer ${
                     isActive 
-                      ? `${tab.bg} ${tab.color} shadow-sm` 
+                      ? `${tab.bg} ${tab.color} shadow-sm ring-1 ring-inset ring-slate-100` 
                       : 'text-slate-500 hover:text-slate-900 hover:bg-slate-50'
                   }`}
                 >

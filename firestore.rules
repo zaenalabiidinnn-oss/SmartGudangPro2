@@ -61,7 +61,7 @@ service cloud.firestore {
       allow read: if isSignedIn();
       allow create: if isAdmin()
         && incoming().name is string && incoming().name.size() <= 255
-        && incoming().currentStock is number
+        && (incoming().currentStock is number || !('currentStock' in incoming()))
         && incoming().warehouseId is string
         && (!('threshold' in incoming()) || incoming().threshold is number)
         && (!('pcsPerCarton' in incoming()) || incoming().pcsPerCarton is number);
@@ -69,8 +69,12 @@ service cloud.firestore {
         && (
           isAdmin() || 
           (
-            // Allow staff to update only currentStock if it's via a background process (like transactions)
-            incoming().diff(existing()).affectedKeys().hasOnly(['currentStock', 'lastUpdated', 'pcsPerCarton'])
+            // Allow staff to update stock fields via background processes
+            incoming().diff(existing()).affectedKeys().hasAll(['lastUpdated']) &&
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'currentStock', 'lastUpdated', 'pcsPerCarton', 'detailedStock', 
+              'totalMasuk', 'totalKeluar', 'returnStock', 'brokenStock', 'holdStock'
+            ])
           )
         )
         && (!('threshold' in incoming()) || incoming().threshold is number)
@@ -82,8 +86,8 @@ service cloud.firestore {
     // Transaction Records
     function isValidTransaction(data) {
       return data.skuId is string && isValidId(data.skuId)
-        && data.type in ['SCAN', 'MASUK', 'KELUAR', 'RESTOCK', 'SALE', 'SPECIAL', 'SCAN KELUAR', 'RETUR', 'INSPEKSI']
-        && data.quantity is number && data.quantity != 0
+        && data.type in ['SCAN', 'MASUK', 'KELUAR', 'RESTOCK', 'SALE', 'SPECIAL', 'SCAN KELUAR', 'RETUR', 'INSPEKSI', 'KOREKSI']
+        && data.quantity is number
         && data.date is string
         && data.warehouseId is string;
     }
@@ -110,6 +114,13 @@ service cloud.firestore {
     }
 
     match /history/inspeksi/records/{id} {
+      allow read: if isSignedIn() && (!('warehouseId' in existing()) || resource.data.warehouseId is string);
+      allow create: if isSignedIn() && isValidTransaction(incoming());
+      allow update: if isAdmin() && isValidTransaction(incoming());
+      allow delete: if isAdmin();
+    }
+
+    match /history/koreksi/records/{id} {
       allow read: if isSignedIn() && (!('warehouseId' in existing()) || resource.data.warehouseId is string);
       allow create: if isSignedIn() && isValidTransaction(incoming());
       allow update: if isAdmin() && isValidTransaction(incoming());

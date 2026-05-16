@@ -1,12 +1,13 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { collection, onSnapshot, query, orderBy, limit, getDocs, where } from 'firebase/firestore';
+import { collection, onSnapshot, query, orderBy, limit, getDocs, where, setDoc, doc } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { handleFirestoreError, OperationType } from '../lib/errorHandlers';
 import { useWarehouse } from '../contexts/WarehouseContext';
 import { processTransaction, deleteTransaction } from '../services/rekapService';
 import { SKU } from '../types';
-import { Trash2, Scan, AlertCircle, Filter, X } from 'lucide-react';
+import { Trash2, Scan, AlertCircle, Filter, X, FileDown, Upload, FileQuestion, Loader2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
+import { utils, read, writeFile } from 'xlsx';
 
 const DataScan: React.FC = () => {
   const { activeWarehouse } = useWarehouse();
@@ -19,6 +20,9 @@ const DataScan: React.FC = () => {
   const [isProcessing, setIsProcessing] = useState(false);
   const [isDeleting, setIsDeleting] = useState<string | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [isImporting, setIsImporting] = useState(false);
+  const [showExportModal, setShowExportModal] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [showFilters, setShowFilters] = useState(false);
   const [filters, setFilters] = useState({
     date: '',
@@ -171,58 +175,173 @@ const DataScan: React.FC = () => {
     }
   };
 
+  const exportToExcel = (includeData: boolean = true) => {
+    const workbook = utils.book_new();
+    
+    // Sheet 1: Data (if includeData is true)
+    if (includeData) {
+      const dataToExport = filteredLogs.map(log => ({
+        'Kode SKU': log.skuId,
+        'Nomor Resi': log.receiptId,
+        'Quantity': log.quantity
+      }));
+      
+      const worksheetData = dataToExport.length > 0 
+        ? utils.json_to_sheet(dataToExport)
+        : utils.json_to_sheet([{ 'Kode SKU': '', 'Nomor Resi': '', 'Quantity': '' }]);
+      
+      utils.book_append_sheet(workbook, worksheetData, 'Data Scan');
+    }
+
+    // Sheet 2: Template Import (Always include)
+    const templateData = [
+      { 'Kode SKU': 'SKU-CONTOH-001', 'Nomor Resi': 'RESI123456789', 'Quantity': 1 },
+      { 'Kode SKU': 'SKU-CONTOH-002', 'Nomor Resi': 'RESI987654321', 'Quantity': 2 }
+    ];
+    const worksheetTemplate = utils.json_to_sheet(templateData);
+    utils.book_append_sheet(workbook, worksheetTemplate, 'Template Import');
+    
+    const fileName = includeData 
+      ? `Data_Scan_Full_${new Date().toISOString().split('T')[0]}.xlsx` 
+      : 'Format_Import_Data_Scan.xlsx';
+      
+    writeFile(workbook, fileName);
+    setShowExportModal(false);
+  };
+
+  const downloadTemplate = () => {
+    exportToExcel(false);
+  };
+
+  const exportBlankExcel = () => {
+    exportToExcel(false);
+  };
+
+  const handleImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !activeWarehouse) return;
+
+    setIsImporting(true);
+    const reader = new FileReader();
+    reader.onload = async (evt) => {
+      try {
+        const data = evt.target?.result;
+        const workbook = read(data, { type: 'binary' });
+        const sheetName = workbook.SheetNames[0];
+        const worksheet = workbook.Sheets[sheetName];
+        const json = utils.sheet_to_json(worksheet) as any[];
+
+        let successCount = 0;
+        let failCount = 0;
+        let dupeCount = 0;
+
+        for (const row of json) {
+          const skuCode = String(row['Kode SKU'] || row['SKU'] || '').trim().toUpperCase();
+          const receiptId = String(row['Nomor Resi'] || row['barcode/no resi'] || '').trim();
+          const qty = Number(row['Quantity'] || row['qty'] || row['Quantity'] || 1);
+          const date = String(row['Tanggal (YYYY-MM-DD)'] || new Date().toISOString().split('T')[0]).trim();
+
+          if (!skuCode || !receiptId) {
+            failCount++;
+            continue;
+          }
+
+          try {
+            // Duplicate check
+            const qCheck = query(
+              collection(db, 'history/keluar/records'),
+              where('skuId', '==', skuCode),
+              where('receiptId', '==', receiptId),
+              where('warehouseId', '==', activeWarehouse.id)
+            );
+            const checkSnap = await getDocs(qCheck);
+            
+            if (!checkSnap.empty) {
+              dupeCount++;
+              continue;
+            }
+
+            // Verify SKU exists in this warehouse
+            const skuDocRef = doc(db, 'skus', `${activeWarehouse.id}_${skuCode}`);
+            const skuDoc = await getDocs(query(collection(db, 'skus'), where('id', '==', skuCode), where('warehouseId', '==', activeWarehouse.id)));
+            
+            if (skuDoc.empty) {
+              console.warn(`SKU ${skuCode} tidak ditemukan di gudang ini.`);
+              failCount++;
+              continue;
+            }
+
+            await processTransaction('SCAN', {
+              skuId: skuCode,
+              quantity: qty,
+              receiptId: receiptId,
+              date: date,
+              warehouseId: activeWarehouse.id
+            });
+            successCount++;
+          } catch (err) {
+            console.error(`Gagal import scan ${skuCode}:`, err);
+            failCount++;
+          }
+        }
+
+        window.alert(`Import Selesai!\nBerhasil: ${successCount}\nDuplikat (Lewati): ${dupeCount}\nGagal: ${failCount}`);
+      } catch (err) {
+        console.error('Error reading excel:', err);
+        window.alert('Gagal membaca file Excel.');
+      } finally {
+        setIsImporting(false);
+        if (fileInputRef.current) fileInputRef.current.value = '';
+      }
+    };
+    reader.readAsBinaryString(file);
+  };
+
   return (
     <div className="max-w-6xl mx-auto space-y-8">
       {/* Prime Scan Area */}
-      <div className="bg-white rounded-3xl border border-slate-200 shadow-xl shadow-slate-200/40 p-8 relative overflow-hidden">
-        <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-indigo-500 via-purple-500 to-indigo-500 animate-gradient-x" />
-        
+      <div className="bg-white rounded-3xl border border-slate-200 shadow-sm p-8">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 mb-8">
           <div className="flex items-center gap-4">
-            <div className="bg-indigo-600 p-3.5 rounded-2xl shadow-lg shadow-indigo-100">
-              <Scan className="w-6 h-6 text-white" />
+            <div className="bg-slate-100 p-3 rounded-2xl">
+              <Scan className="w-6 h-6 text-slate-800" />
             </div>
             <div>
-              <h2 className="text-2xl font-black text-slate-900 tracking-tight">Rapid Scan</h2>
-              <p className="text-slate-400 font-bold uppercase tracking-widest text-[9px]">High Velocity Outbound</p>
+              <h2 className="text-2xl font-black text-slate-900 tracking-tight">Rapid Scan (Keluar)</h2>
+              <p className="text-slate-400 font-bold uppercase tracking-widest text-[9px]">Inventory Outbound Management</p>
             </div>
           </div>
           
           <div className="flex items-center gap-2.5 bg-slate-50 px-4 py-2 rounded-xl border border-slate-100">
-             <div className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse" />
-             <span className="text-[9px] font-black text-slate-500 uppercase tracking-widest leading-none">System Ready</span>
+             <div className="w-1.5 h-1.5 bg-emerald-500 rounded-full" />
+             <span className="text-[9px] font-black text-slate-500 uppercase tracking-widest leading-none">Ready</span>
           </div>
         </div>
 
-        <form onSubmit={handleScan} className="grid grid-cols-1 md:grid-cols-12 gap-5 items-end">
+        <form onSubmit={handleScan} className="grid grid-cols-1 md:grid-cols-12 gap-4 items-end">
           <div className="md:col-span-4 space-y-1.5">
-            <label className="text-[9px] font-black uppercase tracking-widest text-slate-400 ml-2">Stock Category</label>
-            <div className="relative">
-              <select
-                value={selectedSku}
-                onChange={(e) => setSelectedSku(e.target.value)}
-                className="w-full pl-4 pr-10 py-3.5 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-4 focus:ring-indigo-100 focus:border-indigo-500 focus:bg-white outline-none transition-all font-black text-slate-700 appearance-none text-base shadow-sm"
-              >
-                <option value="">-- SELECT SKU --</option>
-                {skus.map(sku => (
-                  <option key={sku.id} value={sku.id}>{sku.id} &bull; {sku.name}</option>
-                ))}
-              </select>
-              <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-slate-300">
-                <Scan className="w-4 h-4 opacity-30" />
-              </div>
-            </div>
+            <label className="text-[9px] font-black uppercase tracking-widest text-slate-400 ml-2">Pilih SKU</label>
+            <select
+              value={selectedSku}
+              onChange={(e) => setSelectedSku(e.target.value)}
+              className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl outline-none transition-all font-bold text-slate-700 text-sm"
+            >
+              <option value="">-- PILIH BARANG --</option>
+              {skus.map(sku => (
+                <option key={sku.id} value={sku.id}>{sku.id} - {sku.name}</option>
+              ))}
+            </select>
           </div>
 
           <div className="md:col-span-5 space-y-1.5">
-            <label className="text-[9px] font-black uppercase tracking-widest text-slate-400 ml-2">Barcode / Receipt ID</label>
+            <label className="text-[9px] font-black uppercase tracking-widest text-slate-400 ml-2">Barcode / No Resi</label>
             <input
               ref={inputRef}
               type="text"
               value={receiptId}
               onChange={(e) => setReceiptId(e.target.value)}
-              placeholder="SCAN NOW..."
-              className="w-full px-5 py-3.5 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-4 focus:ring-indigo-100 focus:border-indigo-500 focus:bg-white outline-none transition-all font-black text-xl text-indigo-600 placeholder:text-slate-200 shadow-sm"
+              placeholder="SCAN DISINI..."
+              className="w-full px-5 py-3 bg-slate-50 border border-slate-200 rounded-2xl outline-none font-black text-lg text-indigo-600 placeholder:text-slate-300"
             />
           </div>
 
@@ -232,7 +351,7 @@ const DataScan: React.FC = () => {
               type="number"
               value={quantity || ''}
               onChange={(e) => setQuantity(Number(e.target.value))}
-              className="w-full px-2 py-3.5 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-4 focus:ring-indigo-100 focus:border-indigo-500 focus:bg-white outline-none transition-all font-black text-lg text-center text-slate-700 shadow-sm"
+              className="w-full px-2 py-3 bg-slate-50 border border-slate-200 rounded-2xl outline-none font-black text-center text-slate-700"
               min="1"
             />
           </div>
@@ -241,11 +360,9 @@ const DataScan: React.FC = () => {
             <button
               type="submit"
               disabled={isProcessing}
-              className="w-full h-[54px] bg-indigo-600 hover:bg-slate-900 text-white font-black rounded-2xl transition-all shadow-xl shadow-indigo-100 active:scale-95 disabled:opacity-50 disabled:grayscale flex items-center justify-center gap-2 uppercase tracking-widest text-[10px]"
+              className="w-full h-[48px] bg-slate-900 text-white font-black rounded-2xl transition-all active:scale-95 disabled:opacity-50 uppercase tracking-widest text-[10px]"
             >
-              {isProcessing ? (
-                 <div className="w-5 h-5 border-3 border-white/20 border-t-white rounded-full animate-spin" />
-              ) : 'Commit'}
+              {isProcessing ? 'Proses...' : 'SIMPAN'}
             </button>
           </div>
         </form>
@@ -270,9 +387,46 @@ const DataScan: React.FC = () => {
       {/* Modern List */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
          <div className="lg:col-span-2 space-y-4">
-            <div className="flex items-center justify-between px-4">
+            <div className="flex items-center justify-between px-4 flex-wrap gap-4">
                <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.3em]">Session History</h3>
-               <div className="flex items-center gap-3">
+                <div className="flex items-center gap-3">
+                 <div className="flex items-center gap-1">
+                   <button
+                     onClick={() => setShowExportModal(true)}
+                     className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest bg-emerald-600 text-white shadow-lg shadow-emerald-200 hover:bg-emerald-700 transition-all active:scale-95"
+                   >
+                     <FileDown className="w-3.5 h-3.5" />
+                     Export Excel
+                   </button>
+                 </div>
+
+                 <div className="flex items-center">
+                   <input 
+                     type="file" 
+                     ref={fileInputRef} 
+                     onChange={handleImport} 
+                     accept=".xlsx, .xls, .csv" 
+                     className="hidden" 
+                   />
+                   <button
+                     onClick={() => fileInputRef.current?.click()}
+                     disabled={isImporting}
+                     className="flex items-center gap-2 px-3 py-1.5 rounded-l-lg text-[9px] font-black uppercase tracking-widest bg-indigo-50 text-indigo-600 border border-indigo-100 hover:bg-indigo-100 transition-all active:scale-95 disabled:opacity-50"
+                   >
+                     {isImporting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Upload className="w-3.5 h-3.5" />}
+                     Import
+                   </button>
+                   <button
+                     onClick={downloadTemplate}
+                     className="px-2 py-1.5 bg-indigo-50 text-indigo-400 border-y border-r border-indigo-100 rounded-r-lg hover:text-indigo-600 transition-colors"
+                     title="Download Template Excel"
+                   >
+                     <FileQuestion className="w-3.5 h-3.5" />
+                   </button>
+                 </div>
+
+                 <div className="h-4 w-px bg-slate-200 mx-1" />
+
                  {Object.values(filters).some(v => v !== '') && (
                     <button 
                       onClick={() => setFilters({ date: '', skuId: '', receiptId: '' })}
@@ -501,6 +655,70 @@ const DataScan: React.FC = () => {
                     className="w-full mt-8 bg-indigo-600 text-white font-black py-4 rounded-2xl shadow-xl shadow-indigo-100 hover:bg-slate-900 transition-all uppercase tracking-widest text-[10px]"
                   >
                     Terapkan Filter
+                  </button>
+               </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Export Modal */}
+      <AnimatePresence>
+        {showExportModal && (
+          <div className="fixed inset-0 z-[110] flex items-center justify-center p-4">
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setShowExportModal(false)}
+              className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm"
+            />
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="relative w-full max-w-md bg-white rounded-[2.5rem] shadow-2xl overflow-hidden"
+            >
+               <div className="p-8">
+                  <div className="flex items-center gap-3 mb-6">
+                    <div className="bg-emerald-100 p-2 rounded-xl text-emerald-600">
+                      <FileDown className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <h3 className="text-xl font-black text-slate-900 leading-tight">Export Excel</h3>
+                      <p className="text-xs text-slate-400 font-bold uppercase tracking-widest">Rapid Scan Data</p>
+                    </div>
+                  </div>
+
+                  <div className="space-y-3">
+                    <button
+                      onClick={() => exportToExcel(true)}
+                      className="w-full flex items-center justify-between p-4 bg-slate-50 hover:bg-emerald-50 border-2 border-slate-100 hover:border-emerald-200 rounded-2xl transition-all group"
+                    >
+                      <div className="text-left">
+                        <p className="font-black text-slate-700 group-hover:text-emerald-700 text-sm">Download Data & Template</p>
+                        <p className="text-[10px] text-slate-400">Berisi data scan saat ini + Template Import</p>
+                      </div>
+                      <FileDown className="w-5 h-5 text-slate-300 group-hover:text-emerald-500" />
+                    </button>
+
+                    <button
+                      onClick={() => exportToExcel(false)}
+                      className="w-full flex items-center justify-between p-4 bg-slate-50 hover:bg-indigo-50 border-2 border-slate-100 hover:border-indigo-200 rounded-2xl transition-all group"
+                    >
+                      <div className="text-left">
+                        <p className="font-black text-slate-700 group-hover:text-indigo-700 text-sm">Download Template Saja</p>
+                        <p className="text-[10px] text-slate-400">Hanya format kosong (Kode SKU, Resi, Qty)</p>
+                      </div>
+                      <FileQuestion className="w-5 h-5 text-slate-300 group-hover:text-indigo-500" />
+                    </button>
+                  </div>
+
+                  <button
+                    onClick={() => setShowExportModal(false)}
+                    className="w-full mt-6 py-3 text-slate-400 font-black text-[10px] uppercase tracking-widest hover:text-slate-600 transition-colors"
+                  >
+                    Batalkan
                   </button>
                </div>
             </motion.div>

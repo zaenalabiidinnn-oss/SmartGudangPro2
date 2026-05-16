@@ -5,7 +5,7 @@ import { handleFirestoreError, OperationType } from '../lib/errorHandlers';
 import { useWarehouse } from '../contexts/WarehouseContext';
 import { processTransaction, deleteTransaction, inspectRetur, releaseFromHold, disposeBrokenStock, releaseFromBroken, importReturLogs, bulkUpdateSpecialStock } from '../services/rekapService';
 import { SKU } from '../types';
-import { Trash2, RotateCcw, AlertCircle, PackageCheck, PauseCircle, XCircle, Wrench, CheckCircle2, History, X, Download, Upload, FileSpreadsheet } from 'lucide-react';
+import { Trash2, RotateCcw, AlertCircle, PackageCheck, PauseCircle, XCircle, Wrench, CheckCircle2, History, X, Download, Upload, FileSpreadsheet, ChevronDown } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import * as XLSX from 'xlsx';
 
@@ -33,8 +33,18 @@ const DataRetur: React.FC = () => {
   const [quantity, setQuantity] = useState(0);
   const [inputMode, setInputMode] = useState<'PCS' | 'CARTON'>('PCS');
   const [numCartons, setNumCartons] = useState(0);
-  const [pcsPerCartonOverride, setPcsPerCartonOverride] = useState(1);
+  const [extraPcs, setExtraPcs] = useState(0);
+  const [pcsPerCartonOverride, setPcsPerCartonOverride] = useState(0);
   const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
+  
+  const selectedSkuData = skus.find(s => s.id === selectedSku);
+  const existingMultipliers = Array.from(new Set([
+    1,
+    ...(selectedSkuData?.pcsPerCarton && selectedSkuData.pcsPerCarton > 1 ? [selectedSkuData.pcsPerCarton] : []),
+    ...(selectedSkuData?.detailedStock ? Object.keys(selectedSkuData.detailedStock).map(Number) : [])
+  ]))
+  .filter(n => n >= 1)
+  .sort((a, b) => b - a);
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [error, setError] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
@@ -225,13 +235,14 @@ const DataRetur: React.FC = () => {
         reason: reason ? `[${returType}] ${reason}` : `[${returType}] Tanpa Alasan`,
         date,
         warehouseId: activeWarehouse.id,
-        ...(inputMode === 'CARTON' ? { pcsPerCarton: pcsPerCartonOverride } : {})
+        pcsPerCarton: inputMode === 'CARTON' ? (pcsPerCartonOverride || 1) : 1
       });
       setDocumentNo('');
       setReason('');
       setReturType('RETUR');
       setQuantity(0);
       setNumCartons(0);
+      setExtraPcs(0);
       setActiveSubTab('INSPEKSI'); // Auto switch to view the record
       setViewMode('LOG');
     } catch (err) {
@@ -342,22 +353,6 @@ const DataRetur: React.FC = () => {
         </div>
       </div>
 
-      {error && (
-        <motion.div 
-          initial={{ opacity: 0, y: -10 }} 
-          animate={{ opacity: 1, y: 0 }} 
-          className="bg-rose-50 border border-rose-100 p-4 rounded-xl flex items-center justify-between gap-3 shadow-sm"
-        >
-          <div className="flex items-center gap-3">
-            <AlertCircle className="w-5 h-5 text-rose-600" />
-            <p className="text-xs font-bold text-rose-600">{error}</p>
-          </div>
-          <button onClick={() => setError('')} className="p-1 hover:bg-rose-100 rounded-lg text-rose-400 transition-colors">
-            <X className="w-4 h-4" />
-          </button>
-        </motion.div>
-      )}
-
       <AnimatePresence mode="wait">
         {activeSubTab === 'INPUT' ? (
           <motion.div
@@ -365,13 +360,15 @@ const DataRetur: React.FC = () => {
             initial={{ opacity: 0, x: -20 }}
             animate={{ opacity: 1, x: 0 }}
             exit={{ opacity: 0, x: 20 }}
-            className="flex justify-center"
+            className="grid grid-cols-1 xl:grid-cols-12 gap-8 items-start"
           >
-            {/* Same input form as before */}
-            <div className="w-full max-w-2xl">
-              <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-8 overflow-hidden">
+            {/* Operations Panel */}
+            <div className="xl:col-span-4 space-y-6">
+              <div className="bg-white rounded-[2rem] border border-slate-200 shadow-2xl shadow-slate-200/40 p-8">
                 <div className="flex items-center gap-4 mb-8">
-                  <div className="bg-rose-500 w-2 h-7 rounded-full" />
+                  <div className="bg-rose-500/10 p-3 rounded-2xl">
+                    <RotateCcw className="w-8 h-8 text-rose-600" />
+                  </div>
                   <div>
                     <h2 className="text-2xl font-black text-slate-900 tracking-tight leading-none italic uppercase">Input <span className="text-rose-500">RETUR</span></h2>
                     <p className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mt-1">Return Goods Entry</p>
@@ -379,136 +376,142 @@ const DataRetur: React.FC = () => {
                 </div>
 
                 <form onSubmit={handleSubmit} className="space-y-6">
-                  {/* Error was here, moved up */}
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    <div className="space-y-2">
-                      <label className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400 ml-1">
-                        Tanggal Retur <span className="text-rose-500">*</span>
-                      </label>
-                      <input
-                        type="date"
-                        required
-                        value={date}
-                        onChange={(e) => setDate(e.target.value)}
-                        className="w-full px-4 py-3 bg-white border border-slate-200 rounded-xl focus:ring-0 focus:border-rose-500 transition-all font-bold text-sm text-slate-700 shadow-sm"
-                      />
+                  <div className="space-y-4">
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Tanggal</label>
+                        <input
+                          type="date"
+                          required
+                          value={date}
+                          onChange={(e) => setDate(e.target.value)}
+                          className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-4 focus:ring-rose-100 focus:border-rose-400 focus:bg-white outline-none transition-all font-bold text-slate-700 text-sm"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Ref Nota/SJ</label>
+                        <input
+                          type="text"
+                          required
+                          value={documentNo}
+                          onChange={(e) => setDocumentNo(e.target.value)}
+                          placeholder="Wajib Isi"
+                          className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-4 focus:ring-rose-100 focus:border-rose-400 focus:bg-white outline-none transition-all font-bold text-slate-700 text-sm"
+                        />
+                      </div>
                     </div>
 
-                    <div className="space-y-2">
-                      <label className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400 ml-1">
-                        Ref Nota / SJ <span className="text-rose-500">*</span>
-                      </label>
-                      <input
-                        type="text"
-                        required
-                        value={documentNo}
-                        onChange={(e) => setDocumentNo(e.target.value)}
-                        placeholder="NOMOR DOKUMEN"
-                        className="w-full px-4 py-3 bg-white border border-slate-200 rounded-xl focus:ring-4 focus:ring-rose-500/5 focus:border-rose-500 focus:bg-rose-50/10 transition-all font-bold text-sm text-slate-700 shadow-sm placeholder:text-slate-200 outline-none"
-                      />
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Inventory Item</label>
+                        <div className="relative">
+                          <select
+                            required
+                            value={selectedSku}
+                            onChange={(e) => {
+                              const skuId = e.target.value;
+                              setSelectedSku(skuId);
+                            }}
+                            className="w-full px-4 py-3.5 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-4 focus:ring-rose-100 focus:border-rose-400 focus:bg-white outline-none transition-all font-bold text-slate-700 appearance-none uppercase"
+                          >
+                            <option value="">-- PILIH BARANG --</option>
+                            {skus.map(sku => (
+                              <option key={sku.id} value={sku.id}>{sku.id} | {sku.name}</option>
+                            ))}
+                          </select>
+                        </div>
+                      </div>
+
+                      <div className="space-y-2">
+                        <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Jenis</label>
+                        <select
+                          required
+                          value={returType}
+                          onChange={(e) => setReturType(e.target.value as 'RETUR' | 'CANCEL')}
+                          className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl outline-none font-bold text-sm text-slate-700"
+                        >
+                          <option value="RETUR">RETUR</option>
+                          <option value="CANCEL">CANCEL</option>
+                        </select>
+                      </div>
                     </div>
 
-                    <div className="md:col-span-2 space-y-2">
-                      <label className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400 ml-1">
-                        Nama Barang <span className="text-rose-500">*</span>
-                      </label>
-                      <select
-                        required
-                        value={selectedSku}
-                        onChange={(e) => {
-                          const skuId = e.target.value;
-                          setSelectedSku(skuId);
-                          const sku = skus.find(s => s.id === skuId);
-                          if (sku) setPcsPerCartonOverride(sku.pcsPerCarton || 1);
-                        }}
-                        className="w-full px-4 py-3 bg-white border border-slate-200 rounded-xl focus:ring-0 focus:border-rose-500 transition-all font-black text-sm text-slate-700 appearance-none shadow-sm uppercase"
-                      >
-                        <option value="">-- PILIH ITEM --</option>
-                        {skus.map(sku => (
-                          <option key={sku.id} value={sku.id}>{sku.id} | {sku.name}</option>
-                        ))}
-                      </select>
-                    </div>
-
-                    <div className="space-y-2">
-                      <label className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400 ml-1">
-                        Jenis Transaksi <span className="text-rose-500">*</span>
-                      </label>
-                      <select
-                        required
-                        value={returType}
-                        onChange={(e) => setReturType(e.target.value as 'RETUR' | 'CANCEL')}
-                        className="w-full px-4 py-3 bg-white border border-slate-200 rounded-xl focus:ring-0 focus:border-rose-500 transition-all font-black text-sm text-slate-700 appearance-none shadow-sm uppercase"
-                      >
-                        <option value="RETUR">RETUR</option>
-                        <option value="CANCEL">CANCEL</option>
-                      </select>
-                    </div>
-
-                    <div className="md:col-span-2 space-y-2">
-                      <label className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400 ml-1">
-                        Kriteria / Alasan {returType} {returType === 'CANCEL' && <span className="text-rose-500">*</span>}
-                      </label>
-                      <textarea
-                        value={reason}
-                        onChange={(e) => setReason(e.target.value)}
-                        placeholder={returType === 'CANCEL' ? "WAJIB: Isi alasan pembatalan..." : "OPSIONAL: Isi alasan retur (jika ada)..."}
-                        className="w-full px-4 py-3 bg-white border border-slate-200 rounded-xl focus:ring-0 focus:border-rose-500 transition-all font-black text-sm text-slate-700 shadow-sm min-h-[100px]"
-                      />
-                    </div>
-
-                    <div className="md:col-span-2 space-y-4 pt-2">
+                    <div className="space-y-4 pt-2">
                       <div className="flex bg-slate-100 p-1 rounded-xl">
                         {['PCS', 'CARTON'].map(mode => (
                           <button
                             key={mode}
                             type="button"
-                            onClick={() => setInputMode(mode as any)}
+                            onClick={() => {
+                              setInputMode(mode as any);
+                              setQuantity(0);
+                              setNumCartons(0);
+                              setExtraPcs(0);
+                              if (mode === 'CARTON') {
+                                setPcsPerCartonOverride(selectedSkuData?.pcsPerCarton || 0);
+                              }
+                            }}
                             className={`flex-1 py-3 text-[10px] font-black uppercase tracking-widest rounded-lg transition-all ${inputMode === mode ? 'bg-white text-rose-600 shadow-sm' : 'text-slate-400'}`}
                           >
-                            {mode === 'PCS' ? 'Pcs' : 'Isi Dus'}
+                            {mode === 'PCS' ? 'Pcs (Eceran)' : 'Input Dus'}
                           </button>
                         ))}
                       </div>
 
                       {inputMode === 'PCS' ? (
-                        <div className="space-y-2">
-                          <label className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400 text-center block w-full">
-                            QTY RETUR (PCS) <span className="text-rose-500">*</span>
-                          </label>
-                          <input
-                            type="number"
-                            required
-                            min="1"
-                            value={quantity || ''}
-                            onChange={(e) => setQuantity(Number(e.target.value))}
-                            placeholder="0"
-                            className="w-full px-4 py-5 bg-slate-50/50 border border-slate-100 rounded-2xl focus:ring-4 focus:ring-rose-500/5 focus:border-rose-500 focus:bg-white transition-all font-black text-4xl text-rose-600 placeholder:text-slate-100 text-center tabular-nums outline-none"
-                          />
-                        </div>
-                      ) : (
-                        <div className="grid grid-cols-2 gap-4">
-                          <div className="space-y-2 text-center">
-                            <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">
-                              Jml Dus <span className="text-rose-500">*</span>
+                        <div className="space-y-4">
+                          <div className="space-y-2">
+                            <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 text-center block w-full">
+                              QTY RETUR (PCS)
                             </label>
                             <input
                               type="number"
                               required
                               min="1"
-                              value={numCartons || ''}
-                              onChange={(e) => {
-                                const val = Number(e.target.value);
-                                setNumCartons(val);
-                                setQuantity(val * pcsPerCartonOverride);
-                              }}
-                              className="w-full px-4 py-4 bg-slate-50 border border-slate-100 rounded-xl font-black text-2xl text-rose-600 text-center tabular-nums outline-none focus:ring-4 focus:ring-rose-500/5 focus:border-rose-500"
+                              value={quantity || ''}
+                              onChange={(e) => setQuantity(Number(e.target.value))}
+                              placeholder="0"
+                              className="w-full px-4 py-5 bg-slate-50/50 border border-slate-100 rounded-2xl focus:ring-4 focus:ring-rose-500/5 focus:border-rose-500 focus:bg-white transition-all font-black text-4xl text-rose-600 placeholder:text-slate-100 text-center tabular-nums outline-none"
                             />
                           </div>
-                          <div className="space-y-2 text-center">
-                            <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">
-                              PCS/Dus <span className="text-rose-500">*</span>
-                            </label>
+                        </div>
+                      ) : (
+                        <div className="space-y-4">
+                          <div className="grid grid-cols-2 gap-4">
+                            <div className="space-y-2 text-center">
+                              <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Jml Dus</label>
+                              <input
+                                type="number"
+                                required
+                                min="0"
+                                value={numCartons || ''}
+                                onChange={(e) => {
+                                  const val = Number(e.target.value);
+                                  setNumCartons(val);
+                                  setQuantity((val * (pcsPerCartonOverride || 0)) + extraPcs);
+                                }}
+                                className="w-full px-4 py-4 bg-slate-50 border border-slate-100 rounded-xl font-black text-2xl text-rose-600 text-center tabular-nums outline-none focus:ring-4 focus:ring-rose-500/5 focus:border-rose-500"
+                              />
+                            </div>
+                            <div className="space-y-2 text-center">
+                              <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Pcs Sisa</label>
+                              <input
+                                type="number"
+                                required
+                                min="0"
+                                value={extraPcs || ''}
+                                onChange={(e) => {
+                                  const val = Number(e.target.value);
+                                  setExtraPcs(val);
+                                  setQuantity((numCartons * (pcsPerCartonOverride || 0)) + val);
+                                }}
+                                className="w-full px-4 py-4 bg-slate-50 border border-slate-100 rounded-xl font-black text-2xl text-rose-600 text-center outline-none focus:ring-4 focus:ring-rose-500/5 focus:border-rose-500"
+                              />
+                            </div>
+                          </div>
+
+                          <div className="space-y-2 text-center bg-slate-50 p-4 rounded-xl border border-slate-100">
+                            <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Isi Per Dus (Multiplier)</label>
                             <input
                               type="number"
                               required
@@ -517,24 +520,171 @@ const DataRetur: React.FC = () => {
                               onChange={(e) => {
                                 const val = Number(e.target.value);
                                 setPcsPerCartonOverride(val);
-                                setQuantity(numCartons * val);
+                                setQuantity((numCartons * (val || 0)) + extraPcs);
                               }}
-                              className="w-full px-4 py-4 bg-slate-50 border border-slate-100 rounded-xl font-black text-2xl text-rose-600 text-center tabular-nums outline-none focus:ring-4 focus:ring-rose-500/5 focus:border-rose-500"
+                              placeholder="Default SKU"
+                              className="w-full px-4 py-3 bg-white border border-slate-200 rounded-xl font-black text-xl text-rose-600 text-center outline-none focus:ring-4 focus:ring-rose-500/5 focus:border-rose-500 shadow-sm"
                             />
                           </div>
                         </div>
                       )}
+                    </div>
+
+                    {quantity > 0 && (
+                      <div className="pt-2 animate-in fade-in slide-in-from-top-2 duration-300">
+                        <div className="bg-rose-50/50 rounded-2xl border border-rose-100 p-4 text-center">
+                          <p className="text-[10px] font-black text-rose-400 uppercase tracking-widest mb-1">Total Retur</p>
+                          <p className="text-xl font-black text-rose-600 tabular-nums">
+                            {inputMode === 'CARTON' 
+                              ? `${numCartons} DUS ${extraPcs > 0 ? `+ ${extraPcs} PCS` : ''} (ISI ${pcsPerCartonOverride})` 
+                              : `${quantity.toLocaleString()} PCS`}
+                          </p>
+                        </div>
+                      </div>
+                    )}
+
+                    <div className="space-y-2">
+                      <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Alasan</label>
+                      <textarea
+                        value={reason}
+                        onChange={(e) => setReason(e.target.value)}
+                        placeholder="Ketik alasan pembatalan/retur..."
+                        className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-4 focus:ring-rose-100 focus:border-rose-400 focus:bg-white outline-none transition-all font-bold text-slate-700 text-sm h-24 resize-none"
+                      />
                     </div>
                   </div>
 
                   <button
                     type="submit"
                     disabled={isProcessing}
-                    className="w-full bg-slate-900 hover:bg-black text-white font-black py-5 rounded-xl transition-all shadow-xl active:scale-[0.98] disabled:opacity-50 flex items-center justify-center gap-2 uppercase tracking-[0.3em] text-[11px] mt-8"
+                    className="w-full bg-slate-900 hover:bg-black text-white font-black py-4 rounded-2xl transition-all shadow-xl active:scale-[0.98] disabled:opacity-50 flex items-center justify-center gap-2 uppercase tracking-widest text-sm"
                   >
-                    {isProcessing ? 'Processing...' : 'SIMPAN DATA RETUR'}
+                    {isProcessing ? 'Processing...' : 'Simpan Data Retur'}
                   </button>
                 </form>
+              </div>
+            </div>
+
+            {/* Activity Stream */}
+            <div className="xl:col-span-8">
+              <div className="bg-white rounded-[2.5rem] border border-slate-200 shadow-2xl shadow-slate-200/30 overflow-hidden flex flex-col h-full min-h-[500px]">
+                <div className="p-8 border-b border-slate-50 flex items-center justify-between">
+                  <h3 className="text-sm font-black text-slate-500 uppercase tracking-widest leading-none">Activity Stream</h3>
+                  <div className="bg-rose-100 text-rose-600 px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest leading-none">
+                    Realtime Logs
+                  </div>
+                </div>
+                
+                <div className="overflow-x-auto flex-1">
+                  <table className="w-full text-left">
+                    <thead>
+                      <tr className="bg-slate-50/50 text-slate-400 text-[10px] uppercase font-black tracking-widest border-b border-slate-100">
+                        <th className="px-8 py-5">Tanggal</th>
+                        <th className="px-6 py-5">Barang</th>
+                        <th className="px-6 py-5">Ref / Alasan</th>
+                        <th className="px-6 py-5 text-center">Carton/Dus</th>
+                        <th className="px-8 py-5 text-right w-20">Aksi</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-50">
+                      {logs.length === 0 ? (
+                        <tr>
+                          <td colSpan={5} className="py-32 text-center">
+                            <div className="flex flex-col items-center justify-center">
+                              <RotateCcw className="w-16 h-16 mb-4 text-slate-100" />
+                              <p className="font-bold text-slate-400 uppercase tracking-widest text-xs">Belum Ada Riwayat Retur</p>
+                            </div>
+                          </td>
+                        </tr>
+                      ) : logs.map((log) => (
+                        <tr key={log.id} className="group hover:bg-slate-50/50 transition-colors">
+                          <td className="px-8 py-6 whitespace-nowrap">
+                            <span className="text-[11px] font-black text-slate-900">{log.date}</span>
+                          </td>
+                          <td className="px-6 py-6">
+                            <div className="flex flex-col">
+                              <span className="text-[12px] font-black text-slate-900 uppercase mb-1 leading-none">{log.skuName}</span>
+                              <span className="text-[10px] font-black font-mono text-slate-300 tracking-widest leading-none">#{log.skuId}</span>
+                            </div>
+                          </td>
+                          <td className="px-6 py-6 max-w-xs">
+                            <div className="flex flex-col">
+                              <span className="text-[10px] font-black text-rose-600 uppercase tracking-tighter mb-1">Ref: {log.receiptId}</span>
+                              <p className="text-[11px] font-bold text-slate-400 italic line-clamp-1">{log.reason || "-"}</p>
+                            </div>
+                          </td>
+                          <td className="px-6 py-6 text-center whitespace-nowrap">
+                            <div className="flex flex-col items-center">
+                                {(() => {
+                                  const sku = skus.find(s => s.id === log.skuId);
+                                  const perCarton = log.pcsPerCarton || sku?.pcsPerCarton || 1;
+
+                                  if (perCarton <= 1 || (log as any).inputMode === 'PCS') {
+                                    return (
+                                      <div className="flex flex-col items-center">
+                                        <span className="text-[10px] font-black text-rose-600 bg-rose-50 px-2 py-1 rounded border border-rose-100 uppercase tracking-widest whitespace-nowrap">
+                                          0 DUS
+                                        </span>
+                                        <span className="text-[8px] font-bold text-rose-500 uppercase mt-0.5 tabular-nums">
+                                          + {log.quantity} PCS
+                                        </span>
+                                      </div>
+                                    );
+                                  }
+
+                                  const dus = Math.floor(log.quantity / perCarton);
+                                  const sisa = log.quantity % perCarton;
+                                  return (
+                                    <div className="flex flex-col items-center">
+                                      <span className="text-[10px] font-black text-rose-600 bg-rose-50 px-2 py-1 rounded border border-rose-100 uppercase tracking-widest whitespace-nowrap">
+                                        + {dus} DUS
+                                      </span>
+                                      {sisa > 0 && (
+                                        <span className="text-[8px] font-bold text-rose-500 uppercase mt-0.5 tabular-nums">
+                                          + {sisa} PCS
+                                        </span>
+                                      )}
+                                      <span className="text-[7px] font-bold text-slate-400 uppercase tracking-tighter mt-0.5 leading-none shadow-sm">
+                                        Total: {log.quantity} PCS (Isi {perCarton})
+                                      </span>
+                                    </div>
+                                  );
+                                })()}
+                            </div>
+                          </td>
+                          <td className="px-8 py-6 text-right">
+                            <div className="flex items-center justify-end gap-2">
+                              {confirmDeleteId === log.id ? (
+                                  <div className="flex items-center gap-1">
+                                    <button
+                                      onClick={() => handleDelete(log.id)}
+                                      className="bg-red-600 text-white p-2 rounded-lg"
+                                    >
+                                      <Trash2 className="w-3 h-3" />
+                                    </button>
+                                    <button
+                                      onClick={() => setConfirmDeleteId(null)}
+                                      className="text-[10px] font-black text-slate-400 px-2"
+                                    >
+                                      X
+                                    </button>
+                                  </div>
+                              ) : (
+                                <button
+                                  onClick={() => setConfirmDeleteId(log.id)}
+                                  disabled={isDeleting === log.id}
+                                  className="w-9 h-9 flex items-center justify-center text-slate-200 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-all"
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                </button>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               </div>
             </div>
           </motion.div>
@@ -850,7 +1000,7 @@ const DataRetur: React.FC = () => {
                                  : 'bg-slate-50 text-slate-400 border-slate-100 hover:bg-slate-100'
                              }`}
                            >
-                             Isi {size}
+                             Isi {size || 0}
                            </button>
                          ))}
                        </div>

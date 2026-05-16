@@ -95,19 +95,19 @@ const HistoryLogs: React.FC<HistoryLogsProps> = ({ role }) => {
         row['Alasan'] = log.reason || '-';
       }
       const isPositive = log._source === 'MASUK' || log._source === 'RETUR' || log.type === 'RESTOCK' || log.type === 'MASUK' || log.type === 'RETUR';
-      const pcsPerCarton = log.pcsPerCarton || 1;
+      const pcsPerCarton = log.pcsPerCarton || 0;
       
       if (exportFields.masukPcs) {
         row['Masuk (PCS)'] = isPositive ? log.quantity : 0;
       }
       if (exportFields.masukDus) {
-        row['Masuk (DUS)'] = isPositive ? Math.floor(log.quantity / pcsPerCarton) : 0;
+        row['Masuk (DUS)'] = (isPositive && pcsPerCarton > 1) ? Math.floor(log.quantity / pcsPerCarton) : 0;
       }
       if (exportFields.keluarPcs) {
         row['Keluar (PCS)'] = !isPositive ? Math.abs(log.quantity) : 0;
       }
       if (exportFields.keluarDus) {
-        row['Keluar (DUS)'] = !isPositive ? Math.floor(Math.abs(log.quantity) / pcsPerCarton) : 0;
+        row['Keluar (DUS)'] = (!isPositive && pcsPerCarton > 1) ? Math.floor(Math.abs(log.quantity) / pcsPerCarton) : 0;
       }
       return row;
     });
@@ -193,22 +193,36 @@ const HistoryLogs: React.FC<HistoryLogsProps> = ({ role }) => {
       collection(db, 'history/masuk/records'), 
       where('warehouseId', '==', activeWarehouse.id),
       orderBy('updatedAt', 'desc'), 
-      limit(filterDate ? 500 : 100)
+      limit(filterDate ? 500 : 200)
     );
     let qKeluar = query(
       collection(db, 'history/keluar/records'), 
       where('warehouseId', '==', activeWarehouse.id),
       orderBy('updatedAt', 'desc'), 
+      limit(filterDate ? 500 : 200)
+    );
+    let qRetur = query(
+      collection(db, 'history/retur/records'),
+      where('warehouseId', '==', activeWarehouse.id),
+      orderBy('updatedAt', 'desc'),
+      limit(filterDate ? 500 : 100)
+    );
+    let qKoreksi = query(
+      collection(db, 'history/koreksi/records'),
+      where('warehouseId', '==', activeWarehouse.id),
+      orderBy('updatedAt', 'desc'),
       limit(filterDate ? 500 : 100)
     );
 
     let masukLogs: any[] = [];
     let keluarLogs: any[] = [];
+    let returLogs: any[] = [];
+    let koreksiLogs: any[] = [];
     let unsubscribed = false;
 
     const updateAll = () => {
       if (unsubscribed) return;
-      let combined = [...masukLogs, ...keluarLogs];
+      let combined = [...masukLogs, ...keluarLogs, ...returLogs, ...koreksiLogs];
       
       if (filterDate) {
         combined = combined.filter(l => l.date === filterDate);
@@ -219,7 +233,7 @@ const HistoryLogs: React.FC<HistoryLogsProps> = ({ role }) => {
           const timeB = b.updatedAt?.toMillis?.() || 0;
           return timeB - timeA;
         })
-        .slice(0, 100);
+        .slice(0, 200);
       setLogs(combined);
       setLoading(false);
     };
@@ -230,7 +244,6 @@ const HistoryLogs: React.FC<HistoryLogsProps> = ({ role }) => {
     }, (error) => {
       console.error("Error fetching masuk logs:", error);
       handleFirestoreError(error, OperationType.LIST, 'history/masuk/records');
-      setLoading(false);
     });
 
     const unsubKeluar = onSnapshot(qKeluar, (snap) => {
@@ -239,13 +252,30 @@ const HistoryLogs: React.FC<HistoryLogsProps> = ({ role }) => {
     }, (error) => {
       console.error("Error fetching keluar logs:", error);
       handleFirestoreError(error, OperationType.LIST, 'history/keluar/records');
-      setLoading(false);
+    });
+
+    const unsubRetur = onSnapshot(qRetur, (snap) => {
+      returLogs = snap.docs.map(doc => ({ id: doc.id, ...doc.data(), _source: 'RETUR' }));
+      updateAll();
+    }, (error) => {
+      console.error("Error fetching retur logs:", error);
+      handleFirestoreError(error, OperationType.LIST, 'history/retur/records');
+    });
+
+    const unsubKoreksi = onSnapshot(qKoreksi, (snap) => {
+      koreksiLogs = snap.docs.map(doc => ({ id: doc.id, ...doc.data(), _source: 'KOREKSI' }));
+      updateAll();
+    }, (error) => {
+      console.error("Error fetching koreksi logs:", error);
+      handleFirestoreError(error, OperationType.LIST, 'history/koreksi/records');
     });
 
     return () => {
       unsubscribed = true;
       unsubMasuk();
       unsubKeluar();
+      unsubRetur();
+      unsubKoreksi();
     };
   }, [filterDate, activeWarehouse]);
 
@@ -391,16 +421,31 @@ const HistoryLogs: React.FC<HistoryLogsProps> = ({ role }) => {
   // Calculate stats for current view
   const stats = filteredLogs.reduce((acc, log) => {
     const isPositive = log._source === 'MASUK' || log._source === 'RETUR' || log.type === 'RESTOCK' || log.type === 'MASUK' || log.type === 'RETUR';
+    const isKoreksi = log.type === 'KOREKSI';
     const pcsPerCarton = log.pcsPerCarton || 1;
-    if (isPositive) {
+    const qty = Math.abs(log.quantity);
+    
+    if (isKoreksi) {
+      // Logic for correction - usually skip from simple sum
+    } else if (isPositive) {
       acc.masukPcs += log.quantity;
-      acc.masukDus += Math.floor(log.quantity / pcsPerCarton);
+      if (pcsPerCarton > 1) {
+        acc.masukDusCount += Math.floor(log.quantity / pcsPerCarton);
+        acc.masukRemPcs += log.quantity % pcsPerCarton;
+      } else {
+        acc.masukRemPcs += log.quantity;
+      }
     } else {
-      acc.keluarPcs += Math.abs(log.quantity);
-      acc.keluarDus += Math.floor(Math.abs(log.quantity) / pcsPerCarton);
+      acc.keluarPcs += qty;
+      if (pcsPerCarton > 1) {
+        acc.keluarDusCount += Math.floor(qty / pcsPerCarton);
+        acc.keluarRemPcs += qty % pcsPerCarton;
+      } else {
+        acc.keluarRemPcs += qty;
+      }
     }
     return acc;
-  }, { masukPcs: 0, masukDus: 0, keluarPcs: 0, keluarDus: 0 });
+  }, { masukPcs: 0, masukDusCount: 0, masukRemPcs: 0, keluarPcs: 0, keluarDusCount: 0, keluarRemPcs: 0 });
 
   // Unique lists for dropdowns
   const uniqueItems = Array.from(new Set(logs.map(l => l.skuId))).filter(Boolean).sort();
@@ -802,7 +847,7 @@ const HistoryLogs: React.FC<HistoryLogsProps> = ({ role }) => {
         <div className="overflow-x-auto flex-1">
           <table className="w-full text-left border-collapse">
             <thead>
-              <tr className="bg-slate-50/50 text-slate-400 text-[10px] uppercase font-black tracking-[0.15em] border-b border-slate-100">
+              <tr className="bg-slate-50/50 text-slate-400 text-[10px] uppercase font-black tracking-widest border-b border-slate-100">
                 <th className="px-8 py-5 w-4">
                   <input 
                     type="checkbox" 
@@ -811,16 +856,16 @@ const HistoryLogs: React.FC<HistoryLogsProps> = ({ role }) => {
                     onChange={toggleSelectAll}
                   />
                 </th>
-                <th className="px-4 py-5">TIMESTAMP</th>
-                <th className="px-4 py-5">INVENTORY ITEM</th>
-                <th className="px-4 py-5">REFERENCE</th>
-                <th className="px-4 py-5 font-bold text-indigo-700">REASON / ALASAN</th>
-                <th className="px-4 py-5">TYPE</th>
-                <th className="px-2 py-5 text-center text-emerald-600">MASUK (DUS)</th>
-                <th className="px-2 py-5 text-center text-emerald-600">MASUK (PCS)</th>
-                <th className="px-2 py-5 text-center text-rose-600">KELUAR (DUS)</th>
-                <th className="px-2 py-5 text-center text-rose-600">KELUAR (PCS)</th>
-                <th className="px-8 py-5 text-right w-20">ACTIONS</th>
+                <th className="px-4 py-5">Waktu</th>
+                <th className="px-4 py-5">Barang</th>
+                <th className="px-4 py-5">Referensi</th>
+                <th className="px-4 py-5 font-bold text-slate-600">Alasan</th>
+                <th className="px-4 py-5 font-bold text-slate-600">Tipe</th>
+                <th className="px-2 py-5 text-center text-emerald-600">In (Dus)</th>
+                <th className="px-2 py-5 text-center text-emerald-600">In (Pcs)</th>
+                <th className="px-2 py-5 text-center text-rose-600">Out (Dus)</th>
+                <th className="px-2 py-5 text-center text-rose-600">Out (Pcs)</th>
+                <th className="px-8 py-5 text-right w-20">Aksi</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-50">
@@ -885,9 +930,23 @@ const HistoryLogs: React.FC<HistoryLogsProps> = ({ role }) => {
                       </td>
                       <td className="px-2 py-5 text-center">
                         {isPositive ? (
-                           <span className="text-[10px] font-black text-emerald-600 bg-emerald-50 px-2 py-1 rounded border border-emerald-100">
-                             {Math.floor(log.quantity / (log.pcsPerCarton || 1))} DUS
-                           </span>
+                           <div className="flex flex-col items-center">
+                             <div className="flex flex-col items-center gap-0.5">
+                                <span id={`masuk-dus-${log.id}`} className="text-[10px] font-black text-emerald-600 bg-emerald-50 px-2 py-1 rounded border border-emerald-100">
+                                  {log.pcsPerCarton && log.pcsPerCarton > 1 ? Math.floor(log.quantity / log.pcsPerCarton) : 0} DUS
+                                </span>
+                                {log.inputMode === 'CARTON' && log.pcsPerCarton > 1 && (
+                                  <span className="text-[8px] font-black text-indigo-400 uppercase tracking-tighter">
+                                    ISI {log.pcsPerCarton} PCS
+                                  </span>
+                                )}
+                             </div>
+                             {(log.quantity % (log.pcsPerCarton || 1) > 0 || (log.pcsPerCarton <= 1 && log.quantity > 0)) && (
+                               <span id={`masuk-pcs-${log.id}`} className="text-[8px] font-bold text-emerald-500 uppercase mt-0.5">
+                                 + {log.pcsPerCarton <= 1 ? log.quantity : log.quantity % log.pcsPerCarton} PCS
+                               </span>
+                             )}
+                           </div>
                         ) : (
                           <span className="text-[10px] font-bold text-slate-300">-</span>
                         )}
@@ -901,9 +960,23 @@ const HistoryLogs: React.FC<HistoryLogsProps> = ({ role }) => {
                       </td>
                       <td className="px-2 py-5 text-center">
                         {!isPositive ? (
-                           <span className="text-[10px] font-black text-rose-600 bg-rose-50 px-2 py-1 rounded border border-rose-100">
-                             {Math.floor(Math.abs(log.quantity) / (log.pcsPerCarton || 1))} DUS
-                           </span>
+                           <div className="flex flex-col items-center">
+                             <div className="flex flex-col items-center gap-0.5">
+                                <span className="text-[10px] font-black text-rose-600 bg-rose-50 px-2 py-1 rounded border border-rose-100">
+                                  {log.pcsPerCarton && log.pcsPerCarton > 1 ? Math.floor(Math.abs(log.quantity) / log.pcsPerCarton) : 0} DUS
+                                </span>
+                                {log.inputMode === 'CARTON' && log.pcsPerCarton > 1 && (
+                                  <span className="text-[8px] font-black text-indigo-400 uppercase tracking-tighter">
+                                    ISI {log.pcsPerCarton} PCS
+                                  </span>
+                                )}
+                             </div>
+                             {(Math.abs(log.quantity) % (log.pcsPerCarton || 1) > 0 || (log.pcsPerCarton <= 1 && Math.abs(log.quantity) > 0)) && (
+                               <span className="text-[8px] font-bold text-rose-500 uppercase mt-0.5">
+                                 + {log.pcsPerCarton <= 1 ? Math.abs(log.quantity) : Math.abs(log.quantity) % log.pcsPerCarton} PCS
+                               </span>
+                             )}
+                           </div>
                         ) : (
                           <span className="text-[10px] font-bold text-slate-300">-</span>
                         )}
@@ -973,23 +1046,29 @@ const HistoryLogs: React.FC<HistoryLogsProps> = ({ role }) => {
             </tbody>
             {/* Summary Statistics Row */}
             {!loading && filteredLogs.length > 0 && (
-               <tfoot className="bg-slate-900 border-t-4 border-indigo-500 sticky bottom-0 z-10 shadow-[0_-8px_30px_rgb(0,0,0,0.12)]">
+               <tfoot className="bg-slate-900 border-t-2 border-indigo-500 sticky bottom-0 z-10 shadow-2xl">
                   <tr className="text-white font-black uppercase text-[10px] tracking-widest">
-                     <td colSpan={6} className="px-8 py-4 text-right border-r border-white/5">TOTAL FILTERED DATA</td>
+                     <td colSpan={6} className="px-8 py-4 text-right border-r border-white/5">RINGKASAN FILTER</td>
                      <td className="px-2 py-4 text-center border-r border-white/5 bg-emerald-900/40">
-                        {stats.masukDus.toLocaleString()} DUS
+                        <div className="flex flex-col">
+                           <span className="text-emerald-400">{stats.masukDusCount} DUS</span>
+                           {stats.masukRemPcs > 0 && <span className="text-[8px] text-emerald-500/70">+ {stats.masukRemPcs} PCS</span>}
+                        </div>
                      </td>
                      <td className="px-2 py-4 text-center border-r border-white/5 bg-emerald-900/60">
                         {stats.masukPcs.toLocaleString()} PCS
                      </td>
                      <td className="px-2 py-4 text-center border-r border-white/5 bg-rose-900/40">
-                        {stats.keluarDus.toLocaleString()} DUS
+                        <div className="flex flex-col">
+                           <span className="text-rose-400">{stats.keluarDusCount} DUS</span>
+                           {stats.keluarRemPcs > 0 && <span className="text-[8px] text-rose-500/70">+ {stats.keluarRemPcs} PCS</span>}
+                        </div>
                      </td>
                      <td className="px-2 py-4 text-center border-r border-white/5 bg-rose-900/60">
                         {stats.keluarPcs.toLocaleString()} PCS
                      </td>
                      <td className="px-8 py-4 text-right">
-                        # {filteredLogs.length}
+                        {filteredLogs.length} Entri
                      </td>
                   </tr>
                </tfoot>

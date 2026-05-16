@@ -101,163 +101,116 @@ export const processTransaction = async (
     const totalQuantity = data.quantity;
     
     const detailedStock = skuSnap.data()?.detailedStock || {};
-    const skuPcsPerCarton = skuSnap.data()?.pcsPerCarton || 1;
-
-    // Check if this outgoing is specifically for "RUSAK" stock (taking FROM broken pool)
-    const isBrokenKeluar = isOutgoing && !!data.isBrokenStockKeluar;
-
-    // NEW: Check if this is a "Move to Broken" action (Out from Main, In to Broken)
-    // This happens when a NORMAL KELUAR (not from brokenStock pool) has "rusak" in reason
-    const isMoveToBroken = !isBrokenKeluar && type === 'KELUAR' && data.reason?.toLowerCase().includes('rusak');
+    const skuPcsPerCarton = skuSnap.data()?.pcsPerCarton ?? 1;
 
     let updateData: any = {
       lastUpdated: now
     };
 
     const logs: any[] = [];
-    let remainingToProcess = totalQuantity;
 
-    if (isOutgoing && !isBrokenKeluar) {
+    if (isOutgoing) {
       // NORMAL OUTGOING LOGIC (from currentStock)
-      const availableBatches = Object.entries(detailedStock as Record<string, any>)
-        .map(([s, val]) => {
-          const size = Number(s);
-          const total = typeof val === 'object' && val !== null ? (val.total || 0) : Number(val || 0);
-          const boxes = typeof val === 'object' && val !== null ? (val.boxes || 0) : Math.floor(total / size);
-          return { size, total, boxes, sizeKey: s };
-        })
-        .filter(b => b.total > 0 || b.sizeKey === String(data.pcsPerCarton || skuPcsPerCarton));
+      // If user is in PCS mode (pcsPerCarton=0 or 1), try to subtract from the SKU's primary packaging size if possible
+      // This keeps the "pieces" aligned with the "boxes" they came from.
+      const usedPcsPerCarton = (data.pcsPerCarton && data.pcsPerCarton > 1) ? data.pcsPerCarton : (skuPcsPerCarton || 1);
+      const sizeKey = String(usedPcsPerCarton);
+      
+      updateData.currentStock = increment(-totalQuantity);
+      updateData.totalKeluar = increment(totalQuantity);
 
-      // Sort by total pieces ascending (lowest pieces first)
-      availableBatches.sort((a, b) => {
-        if (data.pcsPerCarton) {
-          if (a.size === data.pcsPerCarton) return -1;
-          if (b.size === data.pcsPerCarton) return 1;
-        }
-        return a.total - b.total;
-      });
-
-      if (availableBatches.length === 0) {
-        availableBatches.push({ 
-          size: data.pcsPerCarton || skuPcsPerCarton, 
-          total: 0, 
-          boxes: 0, 
-          sizeKey: String(data.pcsPerCarton || skuPcsPerCarton) 
-        });
+      // If reason contains 'rusak', move to broken stock pool and add to retur history for visibility
+      const reasonLower = (data.reason || '').toLowerCase();
+      if (reasonLower.includes('rusak')) {
+        updateData.brokenStock = increment(totalQuantity);
+        
+        // Add a shadow record to retur logs so it appears in the Retur management sub-menu
+        const returLogRef = doc(collection(db, 'history/retur/records'));
+        batch.set(returLogRef, cleanData({
+          ...data,
+          quantity: totalQuantity,
+          skuName,
+          type: 'RETUR',
+          isAutoProcessed: true, // Flag to identify it was moved from Keluar
+          reason: `[AUTO-BROKEN] ${data.reason}`,
+          createdAt: now,
+          updatedAt: now,
+          warehouseId: data.warehouseId
+        }));
       }
+      
+      // Update the specific size group
+      updateData[`detailedStock.${sizeKey}.total`] = increment(-totalQuantity);
+      
+      // Calculate resulting boxes for this size group
+      const currentSizeTotal = detailedStock[sizeKey]?.total || 0;
+      const newSizeTotal = currentSizeTotal - totalQuantity;
+      updateData[`detailedStock.${sizeKey}.boxes`] = usedPcsPerCarton > 1 ? Math.floor(newSizeTotal / usedPcsPerCarton) : 0;
 
-      for (const batchInfo of availableBatches) {
-        if (remainingToProcess <= 0) break;
+      logs.push({
+        ...data,
+        quantity: totalQuantity,
+        pcsPerCarton: data.pcsPerCarton ?? skuPcsPerCarton, // Keep original for log record
+        inputMode: (data.pcsPerCarton && data.pcsPerCarton > 1) ? 'CARTON' : 'PCS',
+        skuName,
+        type: logType,
+        createdAt: now,
+        updatedAt: now,
+        warehouseId: data.warehouseId
+      });
+    } else {
+      // HANDLE ALL INCOMING-STYLE LOGS (MASUK, RETUR, RESTOCK, KOREKSI)
+      const isInbound = logType === 'MASUK' || logType === 'RETUR' || logType === 'RESTOCK' || logType === 'KOREKSI';
+      
+      if (isInbound) {
+        const usedPcsPerCarton = data.pcsPerCarton ?? skuPcsPerCarton;
+        const sizeKey = String(usedPcsPerCarton);
+        const divisor = usedPcsPerCarton || 1;
+        
+        if (logType === 'KOREKSI') {
+          updateData.currentStock = totalQuantity;
+          updateData[`detailedStock.${sizeKey}.total`] = totalQuantity;
+          updateData[`detailedStock.${sizeKey}.boxes`] = usedPcsPerCarton > 0 ? Math.floor(totalQuantity / usedPcsPerCarton) : 0;
+        } else {
+          updateData.currentStock = increment(totalQuantity);
+          updateData[`detailedStock.${sizeKey}.total`] = increment(totalQuantity);
+          
+          // Use absolute calculation from the new total for boxes to keep them in sync
+          const currentTotal = detailedStock[sizeKey]?.total || 0;
+          const newTotal = currentTotal + totalQuantity;
+          updateData[`detailedStock.${sizeKey}.boxes`] = usedPcsPerCarton > 0 ? Math.floor(newTotal / usedPcsPerCarton) : 0;
+        }
 
-        const takeFromThisBatch = Math.min(remainingToProcess, Math.max(0, batchInfo.total));
-        const actualTake = (batchInfo === availableBatches[availableBatches.length - 1]) 
-          ? remainingToProcess 
-          : takeFromThisBatch;
-
-        const newTotal = batchInfo.total - actualTake;
-        const newBoxes = Math.floor(Math.max(0, newTotal) / batchInfo.size);
-
-        updateData[`detailedStock.${batchInfo.sizeKey}`] = {
-          total: newTotal,
-          boxes: newBoxes
-        };
+        if (logType === 'RETUR') {
+          updateData.returnStock = increment(totalQuantity);
+        }
+        
+        if (logType === 'MASUK' || logType === 'RESTOCK') {
+          updateData.totalMasuk = increment(totalQuantity);
+        }
 
         logs.push({
           ...data,
-          quantity: actualTake,
-          pcsPerCarton: batchInfo.size,
-          inputMode: data.pcsPerCarton ? 'CARTON' : 'PCS',
+          inputMode: (data.pcsPerCarton && data.pcsPerCarton > 1) ? 'CARTON' : 'PCS',
+          pcsPerCarton: usedPcsPerCarton,
           skuName,
           type: logType,
           createdAt: now,
           updatedAt: now,
           warehouseId: data.warehouseId
         });
-
-        remainingToProcess -= actualTake;
       }
-      
-      updateData.currentStock = increment(-totalQuantity);
-      updateData.totalKeluar = increment(totalQuantity);
-
-      // ADDED: If reason is "rusak", also move to broken stock
-      if (isMoveToBroken) {
-        updateData.brokenStock = increment(totalQuantity);
-        
-        // Also add a RETUR log so it shows up in "Stok Retur"
-        const returLogRef = doc(collection(db, 'history/retur/records'));
-        const returLogData = {
-          ...data,
-          skuName,
-          type: 'RETUR',
-          isAutoProcessed: true,
-          reason: `Auto-Retur (Dari Data Keluar - Rusak): ${data.reason || ''}`,
-          createdAt: now,
-          updatedAt: now,
-          inputMode: data.pcsPerCarton ? 'CARTON' : 'PCS',
-          pcsPerCarton: data.pcsPerCarton || skuPcsPerCarton
-        };
-        batch.set(returLogRef, cleanData(returLogData));
-
-        // Add reference to the logs being pushed
-        logs.forEach(l => {
-          l.autoReturLogId = returLogRef.id;
-        });
-      }
-    } else if (isBrokenKeluar) {
-      // OUTGOING FROM BROKEN STOCK
-      updateData.brokenStock = increment(-totalQuantity);
-      updateData.totalKeluar = increment(totalQuantity); // Still a 'keluar' transaction
-
-      logs.push({
-        ...data,
-        pcsPerCarton: data.pcsPerCarton || skuPcsPerCarton,
-        inputMode: data.pcsPerCarton ? 'CARTON' : 'PCS',
-        skuName,
-        type: logType,
-        isBrokenStockKeluar: true,
-        createdAt: now,
-        updatedAt: now,
-        warehouseId: data.warehouseId
-      });
-    } else {
-      // INCOMING LOGIC
-      const usedPcsPerCarton = data.pcsPerCarton || skuPcsPerCarton;
-      const sizeKey = String(usedPcsPerCarton);
-      
-      if (type !== 'RETUR') {
-        const currentVal = detailedStock[sizeKey];
-        const prevTotal = typeof currentVal === 'object' && currentVal !== null ? (currentVal.total || 0) : Number(currentVal || 0);
-        const newTotal = prevTotal + totalQuantity;
-        const newBoxes = Math.floor(newTotal / usedPcsPerCarton);
-
-        updateData.currentStock = increment(totalQuantity);
-        updateData.totalMasuk = increment(totalQuantity);
-        updateData[`detailedStock.${sizeKey}`] = {
-          total: newTotal,
-          boxes: newBoxes
-        };
-      } else {
-        // Update returnStock in SKU
-        updateData.returnStock = increment(totalQuantity);
-      }
-
-      logs.push({
-        ...data,
-        inputMode: data.pcsPerCarton ? 'CARTON' : 'PCS',
-        pcsPerCarton: usedPcsPerCarton,
-        skuName,
-        type: logType,
-        createdAt: now,
-        updatedAt: now,
-        warehouseId: data.warehouseId
-      });
     }
 
-    // Write all logs
+    // Write all logs (one or more)
     for (const logData of logs) {
       if (logData.quantity !== 0) {
-        const newLogRef = doc(collection(db, targetPath));
+        let coll = 'history/keluar/records';
+        if (logData.type === 'MASUK' || logData.type === 'RESTOCK') coll = 'history/masuk/records';
+        else if (logData.type === 'RETUR') coll = 'history/retur/records';
+        else if (logData.type === 'KOREKSI') coll = 'history/koreksi/records';
+
+        const newLogRef = doc(collection(db, coll));
         batch.set(newLogRef, cleanData(logData));
       }
     }
@@ -267,8 +220,8 @@ export const processTransaction = async (
       batch.update(skuRef, updateData);
     }
 
-    // 4. Update Summaries (Harian, Bulanan, Tahunan) - Skip if RETUR or Broken Keluar
-    if (type !== 'RETUR' && !isBrokenKeluar) {
+    // 4. Update Summaries (Harian, Bulanan, Tahunan) - Skip if RETUR
+    if (type !== 'RETUR') {
       const dateStr = data.date; // YYYY-MM-DD
       const qtyChange = isOutgoing ? -totalQuantity : totalQuantity;
       const monthStr = dateStr.substring(0, 7); // YYYY-MM
@@ -390,119 +343,88 @@ export const deleteTransaction = async (type: TransactionType, logId: string) =>
     const reversedMasukQty = isOutgoing ? 0 : -quantity;
     const reversedKeluarQty = isOutgoing ? -quantity : 0;
 
-    const isBrokenStockKeluar = !!data.isBrokenStockKeluar;
-
     if (skuSnap && skuSnap.exists()) {
       const updateData: any = {
         lastUpdated: serverTimestamp()
       };
 
-      if (type !== 'RETUR' && type !== 'INSPEKSI') {
+      if (data.type !== 'KOREKSI') {
         // 1. Update SKU stock
         const detailedStock = skuSnap.data().detailedStock || {};
-        const sizeKey = String(data.pcsPerCarton || skuSnap.data().pcsPerCarton || 1);
-        const usedPcsPerCarton = Number(sizeKey);
-        const currentVal = detailedStock[sizeKey];
+        const rawPcsPerCarton = data.pcsPerCarton ?? skuSnap.data().pcsPerCarton;
+        const sizeKey = String(rawPcsPerCarton ?? 1);
+        const divisor = (rawPcsPerCarton || 1);
         
-        if (isBrokenStockKeluar) {
-          updateData.brokenStock = increment(quantity); // Reverse decrement
-          updateData.totalKeluar = increment(reversedKeluarQty);
-        } else {
-          updateData.currentStock = increment(reversedStockQty);
-          updateData.totalMasuk = increment(reversedMasukQty);
-          updateData.totalKeluar = increment(reversedKeluarQty);
-
-          // If this was a move to broken stock, subtract from brokenStock
-          if (type === 'KELUAR' && data.reason?.toLowerCase().includes('rusak')) {
-            updateData.brokenStock = increment(-quantity);
-            
-            // Delete linked retur log if ID exists
-            if (data.autoReturLogId) {
-              const linkedReturRef = doc(db, 'history/retur/records', data.autoReturLogId);
-              batch.delete(linkedReturRef);
+        updateData.currentStock = increment(reversedStockQty);
+        if (isOutgoing) {
+            updateData.totalKeluar = increment(-quantity);
+            // Reverse brokenStock if reason contains 'rusak'
+            const reasonLower = (data.reason || '').toLowerCase();
+            if (reasonLower.includes('rusak')) {
+                updateData.brokenStock = increment(-quantity);
+                
+                // Also find and delete the shadow retur record
+                const shadowQ = query(
+                    collection(db, 'history/retur/records'),
+                    where('warehouseId', '==', warehouseId),
+                    where('skuId', '==', skuId),
+                    where('receiptId', '==', data.receiptId),
+                    where('isAutoProcessed', '==', true)
+                );
+                const shadowSnap = await getDocs(shadowQ);
+                shadowSnap.forEach(doc => batch.delete(doc.ref));
             }
-          }
-
-          if (typeof currentVal === 'object' && currentVal !== null) {
-            const currentObj = currentVal as { total: number; boxes: number };
-            const newTotal = (currentObj.total || 0) + reversedStockQty;
-            const newBoxes = Math.floor(Math.max(0, newTotal) / usedPcsPerCarton);
-
-            updateData[`detailedStock.${sizeKey}`] = {
-              total: newTotal,
-              boxes: newBoxes
-            };
-          } else {
-            // Legacy or simple number
-            updateData[`detailedStock.${sizeKey}`] = increment(reversedStockQty);
-          }
+        } else {
+          updateData.totalMasuk = increment(-quantity);
         }
 
-        // Special handling for return conversion reversal
-        if (type === 'MASUK' && (data.isReturnConversion || data.isHoldRelease || data.isBrokenRelease)) {
-          if (data.isHoldRelease) {
-            updateData.holdStock = increment(quantity);
-          } else if (data.isBrokenRelease) {
-            updateData.brokenStock = increment(quantity);
-          } else {
-            updateData.returnStock = increment(quantity);
-            
-            // Recreate the RETUR record
-            const returRef = doc(collection(db, 'history/retur/records'));
-            const originalReason = data.reason?.includes(':') 
-              ? data.reason.split(':').slice(1).join(':').trim() 
-              : data.reason;
-
-            // Merge with existing data but reset metadata and type
-            batch.set(returRef, cleanData({
-              ...data,
-              type: 'RETUR',
-              isReturnConversion: undefined,
-              isBrokenRelease: undefined,
-              reason: originalReason || 'Kembali dari pembatalan inspeksi',
-              createdAt: serverTimestamp(),
-              updatedAt: serverTimestamp()
-            }));
-          }
+        if (data.type === 'RETUR') {
+          updateData.returnStock = increment(-quantity);
         }
 
-        // 2. Adjust Summaries - Skip if Broken Stock Keluar
-        if (!isBrokenStockKeluar) {
-          const skuName = skuSnap.data().name;
-          
-          batch.set(doc(db, 'history/daily/records', `${dateStr}_${internalSkuId}`), {
-            skuId,
-            skuName,
-            date: dateStr,
-            masuk: increment(reversedMasukQty),
-            keluar: increment(reversedKeluarQty),
-            stokAkhir: increment(reversedStockQty),
-            updatedAt: serverTimestamp(),
-            warehouseId
-          }, { merge: true });
-
-          batch.set(doc(db, 'history/monthly/records', `${monthStr}_${internalSkuId}`), {
-            skuId,
-            skuName,
-            month: monthStr,
-            masuk: increment(reversedMasukQty),
-            keluar: increment(reversedKeluarQty),
-            stok: increment(reversedStockQty),
-            updatedAt: serverTimestamp(),
-            warehouseId
-          }, { merge: true });
-
-          batch.set(doc(db, 'history/yearly/records', `${yearStr}_${internalSkuId}`), {
-            skuId,
-            skuName,
-            year: yearStr,
-            masuk: increment(reversedMasukQty),
-            keluar: increment(reversedKeluarQty),
-            stok: increment(reversedStockQty),
-            updatedAt: serverTimestamp(),
-            warehouseId
-          }, { merge: true });
+        // Use dot notation for atomic updates
+        updateData[`detailedStock.${sizeKey}.total`] = increment(reversedStockQty);
+        
+        const fullCartons = divisor > 0 ? Math.floor(quantity / divisor) : 0;
+        if (fullCartons !== 0) {
+          updateData[`detailedStock.${sizeKey}.boxes`] = increment(isOutgoing ? fullCartons : -fullCartons);
         }
+
+        // 2. Adjust Summaries
+        const skuName = skuSnap.data().name;
+        
+        batch.set(doc(db, 'history/daily/records', `${dateStr}_${internalSkuId}`), {
+          skuId,
+          skuName,
+          date: dateStr,
+          masuk: increment(reversedMasukQty),
+          keluar: increment(reversedKeluarQty),
+          stokAkhir: increment(reversedStockQty),
+          updatedAt: serverTimestamp(),
+          warehouseId
+        }, { merge: true });
+
+        batch.set(doc(db, 'history/monthly/records', `${monthStr}_${internalSkuId}`), {
+          skuId,
+          skuName,
+          month: monthStr,
+          masuk: increment(reversedMasukQty),
+          keluar: increment(reversedKeluarQty),
+          stok: increment(reversedStockQty),
+          updatedAt: serverTimestamp(),
+          warehouseId
+        }, { merge: true });
+
+        batch.set(doc(db, 'history/yearly/records', `${yearStr}_${internalSkuId}`), {
+          skuId,
+          skuName,
+          year: yearStr,
+          masuk: increment(reversedMasukQty),
+          keluar: increment(reversedKeluarQty),
+          stok: increment(reversedStockQty),
+          updatedAt: serverTimestamp(),
+          warehouseId
+        }, { merge: true });
       } else if (type === 'RETUR') {
         // Reverse returnStock for RETUR
         updateData.returnStock = increment(-quantity);
@@ -662,14 +584,15 @@ export const inspectRetur = async (
       updateData.currentStock = increment(data.quantity);
       updateData.totalMasuk = increment(data.quantity);
       
-      const usedSize = data.pcsPerCarton || skuData.pcsPerCarton || 1;
-      const sizeKey = String(usedSize);
+      const rawSize = data.pcsPerCarton ?? skuData.pcsPerCarton;
+      const sizeKey = String(rawSize ?? 1);
+      const divisor = rawSize || 1;
       const detailedStock = skuData.detailedStock || {};
       const currentVal = detailedStock[sizeKey];
       
       if (typeof currentVal === 'object' && currentVal !== null) {
         const newTotal = (currentVal.total || 0) + data.quantity;
-        const newBoxes = Math.floor(newTotal / usedSize);
+        const newBoxes = rawSize === 0 ? 0 : Math.floor(newTotal / divisor);
         updateData[`detailedStock.${sizeKey}`] = { total: newTotal, boxes: newBoxes };
       } else {
         updateData[`detailedStock.${sizeKey}`] = increment(data.quantity);
@@ -686,7 +609,7 @@ export const inspectRetur = async (
         createdAt: now,
         updatedAt: now,
         inputMode: data.pcsPerCarton ? 'CARTON' : 'PCS',
-        pcsPerCarton: usedSize
+        pcsPerCarton: divisor
       }));
 
       // Update Summaries
@@ -776,14 +699,15 @@ export const releaseFromHold = async (
       totalMasuk: increment(data.quantity)
     };
 
-    const usedSize = data.pcsPerCarton || skuData.pcsPerCarton || 1;
-    const sizeKey = String(usedSize);
+    const rawSize = data.pcsPerCarton ?? skuData.pcsPerCarton;
+    const sizeKey = String(rawSize ?? 1);
+    const divisor = rawSize || 1;
     const detailedStock = skuData.detailedStock || {};
     const currentVal = detailedStock[sizeKey];
     
     if (typeof currentVal === 'object' && currentVal !== null) {
       const newTotal = (currentVal.total || 0) + data.quantity;
-      const newBoxes = Math.floor(newTotal / usedSize);
+      const newBoxes = rawSize === 0 ? 0 : Math.floor(newTotal / divisor);
       updateData[`detailedStock.${sizeKey}`] = { total: newTotal, boxes: newBoxes };
     } else {
       updateData[`detailedStock.${sizeKey}`] = increment(data.quantity);
@@ -806,7 +730,7 @@ export const releaseFromHold = async (
       reason: data.reason || 'Pelepasan dari HOLD',
       createdAt: now,
       updatedAt: now,
-      pcsPerCarton: usedSize
+      pcsPerCarton: divisor
     }));
 
     // Update Summaries
@@ -881,14 +805,15 @@ export const releaseFromBroken = async (
       totalMasuk: increment(data.quantity)
     };
 
-    const usedSize = data.pcsPerCarton || skuData.pcsPerCarton || 1;
-    const sizeKey = String(usedSize);
+    const rawSize = data.pcsPerCarton ?? skuData.pcsPerCarton;
+    const sizeKey = String(rawSize ?? 1);
+    const divisor = rawSize || 1;
     const detailedStock = skuData.detailedStock || {};
     const currentVal = detailedStock[sizeKey];
     
     if (typeof currentVal === 'object' && currentVal !== null) {
       const newTotal = (currentVal.total || 0) + data.quantity;
-      const newBoxes = Math.floor(newTotal / usedSize);
+      const newBoxes = rawSize === 0 ? 0 : Math.floor(newTotal / divisor);
       updateData[`detailedStock.${sizeKey}`] = { total: newTotal, boxes: newBoxes };
     } else {
       updateData[`detailedStock.${sizeKey}`] = increment(data.quantity);
@@ -912,7 +837,7 @@ export const releaseFromBroken = async (
       createdAt: now,
       updatedAt: now,
       inputMode: 'PCS',
-      pcsPerCarton: usedSize
+      pcsPerCarton: divisor
     }));
 
     // Update Summaries
