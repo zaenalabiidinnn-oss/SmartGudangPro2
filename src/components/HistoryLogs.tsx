@@ -213,16 +213,23 @@ const HistoryLogs: React.FC<HistoryLogsProps> = ({ role }) => {
       orderBy('updatedAt', 'desc'),
       limit(filterDate ? 500 : 100)
     );
+    let qInspeksi = query(
+      collection(db, 'history/inspeksi/records'),
+      where('warehouseId', '==', activeWarehouse.id),
+      orderBy('updatedAt', 'desc'),
+      limit(filterDate ? 500 : 100)
+    );
 
     let masukLogs: any[] = [];
     let keluarLogs: any[] = [];
     let returLogs: any[] = [];
     let koreksiLogs: any[] = [];
+    let inspeksiLogs: any[] = [];
     let unsubscribed = false;
 
     const updateAll = () => {
       if (unsubscribed) return;
-      let combined = [...masukLogs, ...keluarLogs, ...returLogs, ...koreksiLogs];
+      let combined = [...masukLogs, ...keluarLogs, ...returLogs, ...koreksiLogs, ...inspeksiLogs];
       
       if (filterDate) {
         combined = combined.filter(l => l.date === filterDate);
@@ -270,12 +277,21 @@ const HistoryLogs: React.FC<HistoryLogsProps> = ({ role }) => {
       handleFirestoreError(error, OperationType.LIST, 'history/koreksi/records');
     });
 
+    const unsubInspeksi = onSnapshot(qInspeksi, (snap) => {
+      inspeksiLogs = snap.docs.map(doc => ({ id: doc.id, ...doc.data(), _source: 'INSPEKSI' }));
+      updateAll();
+    }, (error) => {
+      console.error("Error fetching inspeksi logs:", error);
+      handleFirestoreError(error, OperationType.LIST, 'history/inspeksi/records');
+    });
+
     return () => {
       unsubscribed = true;
       unsubMasuk();
       unsubKeluar();
       unsubRetur();
       unsubKoreksi();
+      unsubInspeksi();
     };
   }, [filterDate, activeWarehouse]);
 

@@ -33,6 +33,7 @@ const findSku = async (warehouseId: string, skuId: string, name?: string) => {
   const cleanName = name?.trim();
 
   // 1. If name is provided, try searching for the exact combo first
+  // This is the primary way to distinguish SKUs with same ID but different names
   if (cleanName) {
     const q = query(
       collection(db, 'skus'),
@@ -45,40 +46,59 @@ const findSku = async (warehouseId: string, skuId: string, name?: string) => {
     if (!snap.empty) {
       return { ref: snap.docs[0].ref, snap: snap.docs[0], internalId: snap.docs[0].id };
     }
-  }
+    
+    // If name is provided but NOT found, we DO NOT fall back to "ID only" search locally
+    // because that would lead to mixing different products with the same SKU ID.
+    // However, we still do the global search as a hint for metadata/consistency
+  } else {
+    // 2. No name provided: Try prefixed ID (Legacy standard format)
+    const logicalId = cleanId.startsWith(warehouseId + '_') 
+      ? cleanId.substring(warehouseId.length + 1) 
+      : cleanId;
+    const internalId = `${warehouseId}_${logicalId}`;
+    
+    const ref1 = doc(db, 'skus', internalId);
+    const snap1 = await getDoc(ref1);
+    if (snap1.exists()) {
+      return { ref: ref1, snap: snap1, internalId };
+    }
 
-  // 2. Try prefixed ID (Standard format) - Legacy support
-  const logicalId = cleanId.startsWith(warehouseId + '_') 
-    ? cleanId.substring(warehouseId.length + 1) 
-    : cleanId;
-  const internalId = `${warehouseId}_${logicalId}`;
-  
-  const ref1 = doc(db, 'skus', internalId);
-  const snap1 = await getDoc(ref1);
-  if (snap1.exists()) {
-    // If name was provided but doesn't match this doc, we check if there's any other doc with the same ID but this name
-    // (This part is handled by the first query above, so if we're here, no exact match on name was found)
-    // We return the ID match as a fallback
-    return { ref: ref1, snap: snap1, internalId };
-  }
+    // 3. Try to find any SKU with this ID in this warehouse (handles slugged IDs)
+    const qIdOnly = query(
+      collection(db, 'skus'),
+      where('warehouseId', '==', warehouseId),
+      where('id', '==', logicalId),
+      limit(1)
+    );
+    const snapIdOnly = await getDocs(qIdOnly);
+    if (!snapIdOnly.empty) {
+      return { ref: snapIdOnly.docs[0].ref, snap: snapIdOnly.docs[0], internalId: snapIdOnly.docs[0].id };
+    }
 
-  // 3. Try raw ID (Legacy or direct format)
-  const ref2 = doc(db, 'skus', cleanId);
-  const snap2 = await getDoc(ref2);
-  if (snap2.exists()) {
-    const data = snap2.data();
-    if (data.warehouseId === warehouseId) {
-      return { ref: ref2, snap: snap2, internalId: cleanId };
+    // 4. Try raw ID (Legacy or direct format)
+    const ref2 = doc(db, 'skus', cleanId);
+    const snap2 = await getDoc(ref2);
+    if (snap2.exists()) {
+      const data = snap2.data();
+      if (data.warehouseId === warehouseId) {
+        return { ref: ref2, snap: snap2, internalId: cleanId };
+      }
     }
   }
 
-  // 3. Try global search across all warehouses to find name/metadata if not found locally
-  // This helps when an SKU exists in one warehouse but is being introduced to another (e.g. for RETUR)
-  const globalQ = query(collection(db, 'skus'), where('id', '==', logicalId), limit(1));
+  // 5. Global search as fallback/hint (across all warehouses)
+  const logicalIdForGlobal = cleanId.startsWith(warehouseId + '_') 
+    ? cleanId.substring(warehouseId.length + 1) 
+    : cleanId;
+    
+  const globalQ = cleanName 
+    ? query(collection(db, 'skus'), where('id', '==', logicalIdForGlobal), where('name', '==', cleanName), limit(1))
+    : query(collection(db, 'skus'), where('id', '==', logicalIdForGlobal), limit(1));
+    
   const globalSnap = await getDocs(globalQ);
   if (!globalSnap.empty) {
     const globalDoc = globalSnap.docs[0];
-    return { ref: null, snap: globalDoc, internalId, isGlobalMatch: true };
+    return { ref: null, snap: globalDoc, internalId: `${warehouseId}_${logicalIdForGlobal}`, isGlobalMatch: true };
   }
 
   return { ref: null, snap: null, internalId: null };
@@ -161,13 +181,6 @@ export const processTransaction = async (
     const skuData = skuSnap.data();
     const skuName = skuData.name;
 
-    // 1. Transaction Record
-    let targetPath = '';
-    if (type === 'MASUK') targetPath = 'history/masuk/records';
-    else if (type === 'KELUAR') targetPath = 'history/keluar/records';
-    else if (type === 'RETUR') targetPath = 'history/retur/records';
-    else targetPath = 'history/keluar/records'; // fallback for 'SCAN'
-
     // Determine internal type for log
     let logType = type as string;
     if (type === 'SCAN') logType = 'SCAN KELUAR';
@@ -177,6 +190,7 @@ export const processTransaction = async (
 
     // 2. Determine which packaging size to use for breakdown
     const isOutgoing = type === 'SCAN' || type === 'KELUAR';
+    const isRetur = type === 'RETUR';
     const totalQuantity = data.quantity;
     
     const detailedStock = skuSnap.data()?.detailedStock || {};
@@ -255,7 +269,12 @@ export const processTransaction = async (
           updateData.currentStock = totalQuantity;
           updateData[`detailedStock.${sizeKey}.total`] = totalQuantity;
           updateData[`detailedStock.${sizeKey}.boxes`] = usedPcsPerCarton > 0 ? Math.floor(totalQuantity / usedPcsPerCarton) : 0;
+        } else if (logType === 'RETUR') {
+          // RETUR: Only affects returnStock and its own log. 
+          // It does NOT affect currentStock until inspected.
+          updateData.returnStock = increment(totalQuantity);
         } else {
+          // MASUK and RESTOCK
           updateData.currentStock = increment(totalQuantity);
           updateData[`detailedStock.${sizeKey}.total`] = increment(totalQuantity);
           
@@ -265,10 +284,6 @@ export const processTransaction = async (
           updateData[`detailedStock.${sizeKey}.boxes`] = usedPcsPerCarton > 0 ? Math.floor(newTotal / usedPcsPerCarton) : 0;
         }
 
-        if (logType === 'RETUR') {
-          updateData.returnStock = increment(totalQuantity);
-        }
-        
         if (logType === 'MASUK' || logType === 'RESTOCK') {
           updateData.totalMasuk = increment(totalQuantity);
         }
@@ -433,26 +448,122 @@ export const deleteTransaction = async (type: TransactionType, logId: string) =>
         lastUpdated: serverTimestamp()
       };
 
-      if (data.type !== 'KOREKSI') {
-        // 1. Update SKU stock
-        const detailedStock = skuSnap.data().detailedStock || {};
-        const rawPcsPerCarton = data.pcsPerCarton ?? skuSnap.data().pcsPerCarton;
-        const sizeKey = String(rawPcsPerCarton ?? 1);
-        const divisor = (rawPcsPerCarton || 1);
+      // REWRITE: Restructured deleteTransaction to avoid double counting and unreachable blocks
+      if (type === 'INSPEKSI' || data.type === 'INSPEKSI') {
+        const { target, quantity, skuId: logSkuId, warehouseId: logWHId, targetStock } = data;
+        const effectiveTarget = target || targetStock; // Handle legacy field names
+
+        console.log(`Reversing inspection to target: ${effectiveTarget}`);
+
+        // 1. Revert from target pool
+        if (effectiveTarget === 'HOLD') {
+          updateData.holdStock = increment(-quantity);
+        } else if (effectiveTarget === 'RUSAK') {
+          updateData.brokenStock = increment(-quantity);
+        } else if (effectiveTarget === 'JUAL') {
+          updateData.currentStock = increment(-quantity);
+          updateData.totalMasuk = increment(-quantity);
+          
+          const rawSize = data.pcsPerCarton ?? skuSnap.data().pcsPerCarton;
+          const sizeKey = String(rawSize || 1);
+          const usedPcsPerCarton = Number(rawSize || 1);
+          const detailedStock = skuSnap.data().detailedStock || {};
+          const currentVal = detailedStock[sizeKey];
+          
+          if (typeof currentVal === 'object' && currentVal !== null) {
+            const newTotal = (currentVal.total || 0) - quantity;
+            const newBoxes = usedPcsPerCarton > 0 ? Math.floor(Math.max(0, newTotal) / usedPcsPerCarton) : 0;
+            updateData[`detailedStock.${sizeKey}`] = { total: newTotal, boxes: newBoxes };
+          } else {
+            updateData[`detailedStock.${sizeKey}`] = increment(-quantity);
+          }
+
+          // Adjust Summaries for JUAL target reversal (only JUAL affects summaries)
+          const skuName = skuSnap.data().name;
+          batch.set(doc(db, 'history/daily/records', `${dateStr}_${internalSkuId}`), {
+            skuId, skuName, date: dateStr, masuk: increment(-quantity), stokAkhir: increment(-quantity), updatedAt: serverTimestamp(), warehouseId
+          }, { merge: true });
+          batch.set(doc(db, 'history/monthly/records', `${monthStr}_${internalSkuId}`), {
+            skuId, skuName, month: monthStr, masuk: increment(-quantity), stok: increment(-quantity), updatedAt: serverTimestamp(), warehouseId
+          }, { merge: true });
+          batch.set(doc(db, 'history/yearly/records', `${yearStr}_${internalSkuId}`), {
+            skuId, skuName, year: yearStr, masuk: increment(-quantity), stok: increment(-quantity), updatedAt: serverTimestamp(), warehouseId
+          }, { merge: true });
+          
+          // Also find and delete the shadow MASUK record created during inspection
+          const masukQ = query(
+            collection(db, 'history/masuk/records'),
+            where('warehouseId', '==', warehouseId),
+            where('skuId', '==', skuId),
+            where('isReturnConversion', '==', true),
+            where('createdAt', '>=', new Date(Date.now() - 60000)) // Recent lookup context
+          );
+          const masukSnap = await getDocs(masukQ);
+          masukSnap.forEach(doc => {
+            const mData = doc.data();
+            // Match quantity and source context to be safe
+            if (Math.abs(mData.quantity) === Math.abs(quantity)) {
+               batch.delete(doc.ref);
+            }
+          });
+        }
+
+        // 2. Return back to returnStock
+        updateData.returnStock = increment(quantity);
+
+        // 3. Recreate the original RETUR record if possible
+        const returRef = doc(collection(db, 'history/retur/records'));
+        batch.set(returRef, cleanData({
+          skuId: data.skuId,
+          skuName: skuSnap.data().name,
+          quantity: data.quantity,
+          warehouseId: data.warehouseId,
+          date: dateStr,
+          reason: data.reason || 'Batal Inspeksi / Reversal',
+          type: 'RETUR',
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp()
+        }));
+
+      } else if (type === 'RETUR' || data.type === 'RETUR') {
+        // RETUR: Only affects returnStock (and brokenStock if it was an auto-processed one)
+        if (data.isAutoProcessed) {
+           // If it came from a KELUAR (Rusak) item
+           updateData.brokenStock = increment(-quantity);
+           // Note: The original KELUAR that caused this usually stays. 
+           // Deleting the shadow RETUR just removes it from the inspection list and broken pool.
+        } else {
+           updateData.returnStock = increment(-quantity);
+        }
+        // RETUR does not affect currentStock or summaries in our updated logic
+      } else if (data.type === 'KOREKSI') {
+        // Handle KOREKSI specially if needed (usually just delete log and let user manually re-koreksi)
+        // For now, KOREKSI doesn't automatically reverse because it represents absolute state
+        console.log('Deleting KOREKSI log only');
+      } else {
+        // Standard Transactions (MASUK, KELUAR, SCAN, SALE, etc.)
+        const isOutgoing = (
+          type === 'SCAN' || 
+          type === 'KELUAR' || 
+          data.type === 'SALE' || 
+          data.type === 'SPECIAL' || 
+          data.type === 'SCAN KELUAR' ||
+          data.type === 'KELUAR'
+        );
         
+        const reversedStockQty = isOutgoing ? quantity : -quantity;
+        const reversedMasukQty = isOutgoing ? 0 : -quantity;
+        const reversedKeluarQty = isOutgoing ? -quantity : 0;
+
         if (data.isBrokenStockKeluar) {
-            // Reversing broken stock disposal: Add back to broken pool
             updateData.brokenStock = increment(quantity);
         } else {
             updateData.currentStock = increment(reversedStockQty);
             if (isOutgoing) {
                 updateData.totalKeluar = increment(-quantity);
-                // Reverse brokenStock if reason contains 'rusak'
                 const reasonLower = (data.reason || '').toLowerCase();
                 if (reasonLower.includes('rusak')) {
                     updateData.brokenStock = increment(-quantity);
-                    
-                    // Also find and delete the shadow retur record
                     const shadowQ = query(
                         collection(db, 'history/retur/records'),
                         where('warehouseId', '==', warehouseId),
@@ -466,111 +577,32 @@ export const deleteTransaction = async (type: TransactionType, logId: string) =>
             } else {
               updateData.totalMasuk = increment(-quantity);
             }
-        }
 
-        if (data.type === 'RETUR') {
-          updateData.returnStock = increment(-quantity);
-        }
-
-        if (!data.isBrokenStockKeluar) {
-            // Use dot notation for atomic updates
+            const sizeKey = String(data.pcsPerCarton ?? skuSnap.data().pcsPerCarton ?? 1);
+            const divisor = Number(sizeKey);
             updateData[`detailedStock.${sizeKey}.total`] = increment(reversedStockQty);
             
-            const fullCartons = divisor > 0 ? Math.floor(quantity / divisor) : 0;
+            const fullCartons = divisor > 1 ? Math.floor(quantity / divisor) : 0;
             if (fullCartons !== 0) {
               updateData[`detailedStock.${sizeKey}.boxes`] = increment(isOutgoing ? fullCartons : -fullCartons);
             }
         }
 
-        // 2. Adjust Summaries
+        // Adjust Summaries
         const skuName = skuSnap.data().name;
-        
-        // Final adjustment for stokAkhir summary if deleting disposal
         const summaryStockChange = data.isBrokenStockKeluar ? 0 : reversedStockQty;
         
         batch.set(doc(db, 'history/daily/records', `${dateStr}_${internalSkuId}`), {
-          skuId,
-          skuName,
-          date: dateStr,
-          masuk: increment(reversedMasukQty),
-          keluar: increment(reversedKeluarQty),
-          stokAkhir: increment(summaryStockChange),
-          updatedAt: serverTimestamp(),
-          warehouseId
+          skuId, skuName, date: dateStr, masuk: increment(reversedMasukQty), keluar: increment(reversedKeluarQty), stokAkhir: increment(summaryStockChange), updatedAt: serverTimestamp(), warehouseId
         }, { merge: true });
 
         batch.set(doc(db, 'history/monthly/records', `${monthStr}_${internalSkuId}`), {
-          skuId,
-          skuName,
-          month: monthStr,
-          masuk: increment(reversedMasukQty),
-          keluar: increment(reversedKeluarQty),
-          stok: increment(summaryStockChange),
-          updatedAt: serverTimestamp(),
-          warehouseId
+          skuId, skuName, month: monthStr, masuk: increment(reversedMasukQty), keluar: increment(reversedKeluarQty), stok: increment(summaryStockChange), updatedAt: serverTimestamp(), warehouseId
         }, { merge: true });
 
         batch.set(doc(db, 'history/yearly/records', `${yearStr}_${internalSkuId}`), {
-          skuId,
-          skuName,
-          year: yearStr,
-          masuk: increment(reversedMasukQty),
-          keluar: increment(reversedKeluarQty),
-          stok: increment(summaryStockChange),
-          updatedAt: serverTimestamp(),
-          warehouseId
+          skuId, skuName, year: yearStr, masuk: increment(reversedMasukQty), keluar: increment(reversedKeluarQty), stok: increment(summaryStockChange), updatedAt: serverTimestamp(), warehouseId
         }, { merge: true });
-      } else if (type === 'RETUR') {
-        // Reverse returnStock for RETUR
-        updateData.returnStock = increment(-quantity);
-      } else if (type === 'INSPEKSI') {
-        // Revert inspection effects
-        updateData.returnStock = increment(quantity);
-        if (data.target === 'HOLD') updateData.holdStock = increment(-quantity);
-        if (data.target === 'RUSAK') updateData.brokenStock = increment(-quantity);
-        if (data.target === 'JUAL') {
-          updateData.currentStock = increment(-quantity);
-          updateData.totalMasuk = increment(-quantity);
-          
-          const sizeKey = String(data.pcsPerCarton || skuSnap.data().pcsPerCarton || 1);
-          const usedPcsPerCarton = Number(sizeKey);
-          const detailedStock = skuSnap.data().detailedStock || {};
-          const currentVal = detailedStock[sizeKey];
-          
-          if (typeof currentVal === 'object' && currentVal !== null) {
-            const newTotal = (currentVal.total || 0) - quantity;
-            const newBoxes = Math.floor(Math.max(0, newTotal) / usedPcsPerCarton);
-            updateData[`detailedStock.${sizeKey}`] = { total: newTotal, boxes: newBoxes };
-          } else {
-            updateData[`detailedStock.${sizeKey}`] = increment(-quantity);
-          }
-
-          // Adjust Summaries for JUAL target reversal
-          const skuName = skuSnap.data().name;
-          batch.set(doc(db, 'history/daily/records', `${dateStr}_${internalSkuId}`), {
-            skuId, skuName, date: dateStr, masuk: increment(-quantity), stokAkhir: increment(-quantity), updatedAt: serverTimestamp(), warehouseId
-          }, { merge: true });
-          batch.set(doc(db, 'history/monthly/records', `${monthStr}_${internalSkuId}`), {
-            skuId, skuName, month: monthStr, masuk: increment(-quantity), stok: increment(-quantity), updatedAt: serverTimestamp(), warehouseId
-          }, { merge: true });
-          batch.set(doc(db, 'history/yearly/records', `${yearStr}_${internalSkuId}`), {
-            skuId, skuName, year: yearStr, masuk: increment(-quantity), stok: increment(-quantity), updatedAt: serverTimestamp(), warehouseId
-          }, { merge: true });
-        }
-
-        // Recreate the original RETUR record
-        const returRef = doc(collection(db, 'history/retur/records'));
-        batch.set(returRef, cleanData({
-          skuId: data.skuId,
-          skuName: skuSnap.data().name,
-          quantity: data.quantity,
-          warehouseId: data.warehouseId,
-          date: dateStr,
-          reason: data.reason || 'Batal Inspeksi',
-          type: 'RETUR',
-          createdAt: serverTimestamp(),
-          updatedAt: serverTimestamp()
-        }));
       }
 
       batch.update(skuRef, updateData);
