@@ -25,7 +25,7 @@ export interface SKU {
   warehouseId: string;
 }
 
-export type TransactionType = 'SCAN' | 'MASUK' | 'KELUAR' | 'RETUR' | 'INSPEKSI';
+export type TransactionType = 'SCAN' | 'MASUK' | 'KELUAR' | 'RETUR' | 'INSPEKSI' | 'PEMUSNAHAN';
 
 export interface Transaction {
   id?: string;

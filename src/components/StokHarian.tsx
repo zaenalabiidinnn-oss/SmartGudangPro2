@@ -11,6 +11,8 @@ interface StokHarianProps {
 }
 
 interface HistoricalItem {
+  id: string;
+  logicalSkuId: string;
   skuId: string;
   name: string;
   currentStock: number;
@@ -39,8 +41,8 @@ const StokHarian: React.FC<StokHarianProps> = ({ role }) => {
     const q = query(collection(db, 'skus'), where('warehouseId', '==', activeWarehouse.id));
     const unsub = onSnapshot(q, async (snap) => {
       const currentSkus = snap.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
+        ...doc.data(),
+        _internalId: doc.id
       }));
       setSkus(currentSkus);
       
@@ -60,10 +62,14 @@ const StokHarian: React.FC<StokHarianProps> = ({ role }) => {
     
     try {
       const newHistorical: Record<string, any> = {};
+      // Create a mapping to quickly find the internal ID from SKU ID + Name
+      const lookupMap: Record<string, string> = {};
       
       // Initialize with current data
       currentSkus.forEach((sku: any) => {
-        newHistorical[sku.id] = {
+        newHistorical[sku._internalId] = {
+          id: sku._internalId,
+          logicalSkuId: sku.id,
           skuId: sku.id,
           name: sku.name,
           currentStock: sku.currentStock || 0,
@@ -75,6 +81,33 @@ const StokHarian: React.FC<StokHarianProps> = ({ role }) => {
           retur: 0
         };
       });
+
+      // Refined mapping logic
+      currentSkus.forEach((sku: any) => {
+        const logicalId = (sku.id || "").trim();
+        const name = (sku.name || "").trim();
+        // Use a composite key for mapping logs back to historical entries
+        lookupMap[`${logicalId}_${name}`] = sku._internalId;
+      });
+
+      // Helper to find the correct historical record for a log
+      const findHistRecord = (log: any) => {
+        const logSkuId = (log.skuId || "").trim();
+        const logName = (log.skuName || "").trim();
+        
+        // 1. Try exact match (ID + Name)
+        const exactMatchId = lookupMap[`${logSkuId}_${logName}`];
+        if (exactMatchId) return newHistorical[exactMatchId];
+        
+        // 2. Try match by internal ID if log.skuId happens to be the internal ID
+        if (newHistorical[logSkuId]) return newHistorical[logSkuId];
+        
+        // 3. Fallback: match by ID only if there's only one SKU with that ID
+        const possibleIds = Object.values(newHistorical).filter((h: any) => h.logicalSkuId === logSkuId);
+        if (possibleIds.length === 1) return possibleIds[0];
+        
+        return null;
+      };
 
       // Fetch ALL transactions that happened AFTER the selected date
       // We need date > targetDate
@@ -101,7 +134,7 @@ const StokHarian: React.FC<StokHarianProps> = ({ role }) => {
 
       // Work backwards: Stock(T) = CurrentStock - NetChange(T+1 to Now)
       allFutureLogs.forEach((log: any) => {
-        const hist = newHistorical[log.skuId];
+        const hist = findHistRecord(log);
         if (!hist) return;
 
         const qty = log.quantity || 0;
@@ -140,7 +173,7 @@ const StokHarian: React.FC<StokHarianProps> = ({ role }) => {
         const snap = await getDocs(q);
         snap.forEach(doc => {
           const data: any = doc.data();
-          const hist = newHistorical[data.skuId];
+          const hist = findHistRecord(data);
           if (!hist) return;
           const type = collPath.split('/')[1].toUpperCase();
           if (type === 'MASUK') hist.masuk += data.quantity;
@@ -158,8 +191,8 @@ const StokHarian: React.FC<StokHarianProps> = ({ role }) => {
   };
 
   const filteredSkus = Object.values(historicalData).filter((item: HistoricalItem) => {
-    const s = search.toLowerCase();
-    return item.skuId.toLowerCase().includes(s) || item.name.toLowerCase().includes(s);
+    const s = (search || "").toLowerCase();
+    return (item.logicalSkuId || "").toLowerCase().includes(s) || (item.name || "").toLowerCase().includes(s);
   });
 
   return (
@@ -244,12 +277,12 @@ const StokHarian: React.FC<StokHarianProps> = ({ role }) => {
                   const remPcs = pcsPerCarton > 1 ? item.currentStock % pcsPerCarton : item.currentStock;
 
                   return (
-                    <tr key={item.skuId} className="group hover:bg-slate-50/50 transition-colors">
+                    <tr key={item.id} className="group hover:bg-slate-50/50 transition-colors">
                       <td className="px-8 py-6">
                         <div className="flex flex-col">
                           <span className="text-sm font-black text-slate-900 uppercase group-hover:text-indigo-600 transition-colors leading-tight">{item.name}</span>
                           <div className="flex items-center gap-2 mt-1">
-                             <span className="text-[10px] font-black font-mono text-slate-400 tracking-wider bg-slate-100 px-1.5 py-0.5 rounded uppercase leading-none">{item.skuId}</span>
+                             <span className="text-[10px] font-black font-mono text-slate-400 tracking-wider bg-slate-100 px-1.5 py-0.5 rounded uppercase leading-none">{item.logicalSkuId}</span>
                              <span className="text-[9px] font-bold text-slate-300 uppercase tracking-tighter">Isi {pcsPerCarton}</span>
                           </div>
                         </div>

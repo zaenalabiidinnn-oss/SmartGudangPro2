@@ -95,8 +95,8 @@ const UserManagement: React.FC = () => {
   };
 
   const filteredUsers = users.filter(u => 
-    u.displayName?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    u.email?.toLowerCase().includes(searchTerm.toLowerCase())
+    (u.displayName || "").toLowerCase().includes((searchTerm || "").toLowerCase()) ||
+    (u.email || "").toLowerCase().includes((searchTerm || "").toLowerCase())
   );
 
   if (loading) {

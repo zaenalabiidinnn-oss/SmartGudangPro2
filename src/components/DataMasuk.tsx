@@ -65,7 +65,7 @@ const DataMasuk: React.FC = () => {
     const logDate = log.date || '';
     const matchesDate = !filters.date || logDate === filters.date;
     const matchesSku = !filters.skuId || log.skuId === filters.skuId;
-    const matchesRef = !filters.receiptId || log.receiptId?.toLowerCase().includes(filters.receiptId.toLowerCase());
+    const matchesRef = !filters.receiptId || (log.receiptId || "").toLowerCase().includes((filters.receiptId || "").toLowerCase());
     return matchesDate && matchesSku && matchesRef;
   });
 

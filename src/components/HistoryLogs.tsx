@@ -414,10 +414,10 @@ const HistoryLogs: React.FC<HistoryLogsProps> = ({ role }) => {
     
     // General search matches any of the fields
     const matchesSearch = !search || (
-      log.skuId?.toLowerCase().includes(s) || 
-      log.skuName?.toLowerCase().includes(s) ||
-      log.receiptId?.toLowerCase().includes(s) ||
-      log.reason?.toLowerCase().includes(s) ||
+      (log.skuId || "").toLowerCase().includes(s) || 
+      (log.skuName || "").toLowerCase().includes(s) ||
+      (log.receiptId || "").toLowerCase().includes(s) ||
+      (log.reason || "").toLowerCase().includes(s) ||
       dateStr.toLowerCase().includes(s) ||
       typeStr.toLowerCase().includes(s)
     );
@@ -427,7 +427,7 @@ const HistoryLogs: React.FC<HistoryLogsProps> = ({ role }) => {
     const matchesMonth = !filters.month || logMonth === filters.month;
     const matchesDay = !filters.day || logDay === filters.day;
     const matchesItem = !filters.inventoryItem || log.skuId === filters.inventoryItem;
-    const matchesRef = !filters.reference || log.receiptId?.toLowerCase().includes(filters.reference.toLowerCase());
+    const matchesRef = !filters.reference || (log.receiptId || "").toLowerCase().includes((filters.reference || "").toLowerCase());
     const matchesReason = !filters.reason || log.reason === filters.reason;
     const matchesType = !filters.type || typeStr === filters.type;
 

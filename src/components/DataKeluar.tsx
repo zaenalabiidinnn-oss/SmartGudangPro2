@@ -55,7 +55,7 @@ const DataKeluar: React.FC = () => {
 
     const matchesDate = !filters.date || logDate === filters.date;
     const matchesSku = !filters.skuId || log.skuId === filters.skuId;
-    const matchesRef = !filters.receiptId || log.receiptId?.toLowerCase().includes(filters.receiptId.toLowerCase());
+    const matchesRef = !filters.receiptId || (log.receiptId || "").toLowerCase().includes((filters.receiptId || "").toLowerCase());
     const matchesReason = !filters.reason || log.reason === filters.reason;
 
     return matchesDate && matchesSku && matchesRef && matchesReason;

@@ -391,18 +391,24 @@ const StokGudang: React.FC<StokGudangProps> = ({ role }) => {
   };
 
   const filteredSkus = skus.filter(s => {
-    const searchLower = search.toLowerCase();
+    const searchLower = (search || "").toLowerCase();
     
     // General search matches any of the fields
+    const idStr = (s.id || "").toLowerCase();
+    const nameStr = (s.name || "").toLowerCase();
+
     const matchesSearch = !search || (
-      s.id.toLowerCase().includes(searchLower) || 
-      s.name.toLowerCase().includes(searchLower)
+      idStr.includes(searchLower) || 
+      nameStr.includes(searchLower)
     );
 
     // Advanced filters
-    const matchesId = !filters.id || s.id.toLowerCase().includes(filters.id.toLowerCase());
-    const matchesName = !filters.name || s.name.toLowerCase().includes(filters.name.toLowerCase());
-    const matchesStock = !filters.currentStock || String(s.currentStock).includes(filters.currentStock);
+    const filterIdLower = (filters.id || "").toLowerCase();
+    const filterNameLower = (filters.name || "").toLowerCase();
+
+    const matchesId = !filters.id || idStr.includes(filterIdLower);
+    const matchesName = !filters.name || nameStr.includes(filterNameLower);
+    const matchesStock = !filters.currentStock || String(s.currentStock || 0).includes(filters.currentStock);
     const matchesThreshold = !filters.threshold || String(s.threshold ?? 10).includes(filters.threshold);
 
     return matchesSearch && matchesId && matchesName && matchesStock && matchesThreshold;
