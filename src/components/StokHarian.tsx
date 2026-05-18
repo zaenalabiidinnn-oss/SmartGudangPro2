@@ -3,7 +3,8 @@ import { collection, onSnapshot, query, where, getDocs, orderBy, Timestamp } fro
 import { db } from '../lib/firebase';
 import { handleFirestoreError, OperationType } from '../lib/errorHandlers';
 import { useWarehouse } from '../contexts/WarehouseContext';
-import { Calendar, Search, Filter, Loader2, Package, Inbox, AlertCircle, ArrowUpRight, ArrowDownLeft } from 'lucide-react';
+import { Calendar, Search, Filter, Loader2, Package, Inbox, AlertCircle, ArrowUpRight, ArrowDownLeft, Download, FileSpreadsheet } from 'lucide-react';
+import * as XLSX from 'xlsx';
 import { motion, AnimatePresence } from 'motion/react';
 
 interface StokHarianProps {
@@ -195,6 +196,70 @@ const StokHarian: React.FC<StokHarianProps> = ({ role }) => {
     return (item.logicalSkuId || "").toLowerCase().includes(s) || (item.name || "").toLowerCase().includes(s);
   });
 
+  const handleExportCSV = () => {
+    const headers = ['Nama Barang', 'SKU ID', 'Isi', 'Masuk', 'Keluar', 'Retur', 'Stok Akhir', 'Total Stok (Dus)', 'Sisa (Pcs)'];
+    const rows = (filteredSkus as HistoricalItem[]).map(item => {
+      const pcsPerCarton = item.pcsPerCarton || 1;
+      const boxes = pcsPerCarton > 1 ? Math.floor(item.currentStock / pcsPerCarton) : 0;
+      const remPcs = pcsPerCarton > 1 ? item.currentStock % pcsPerCarton : item.currentStock;
+      
+      return [
+        `"${item.name}"`,
+        `"${item.logicalSkuId}"`,
+        pcsPerCarton,
+        item.masuk,
+        item.keluar,
+        item.retur,
+        item.currentStock,
+        boxes,
+        remPcs
+      ];
+    });
+
+    const csvContent = [
+      headers.join(','),
+      ...rows.map(r => r.join(','))
+    ].join('\n');
+
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.setAttribute('href', url);
+    link.setAttribute('download', `Stok_Harian_${activeWarehouse?.name || 'Gudang'}_${targetDate || 'All'}.csv`);
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  const handleExportExcel = () => {
+    const headers = ['Nama Barang', 'SKU ID', 'Isi', 'Masuk', 'Keluar', 'Retur', 'Stok Akhir', 'Total Stok (Dus)', 'Sisa (Pcs)'];
+    const data = (filteredSkus as HistoricalItem[]).map(item => {
+      const pcsPerCarton = item.pcsPerCarton || 1;
+      const boxes = pcsPerCarton > 1 ? Math.floor(item.currentStock / pcsPerCarton) : 0;
+      const remPcs = pcsPerCarton > 1 ? item.currentStock % pcsPerCarton : item.currentStock;
+      
+      return {
+        'Nama Barang': item.name,
+        'SKU ID': item.logicalSkuId,
+        'Isi': pcsPerCarton,
+        'Masuk': item.masuk,
+        'Keluar': item.keluar,
+        'Retur': item.retur,
+        'Stok Akhir': item.currentStock,
+        'Total Stok (Dus)': boxes,
+        'Sisa (Pcs)': remPcs
+      };
+    });
+
+    const worksheet = XLSX.utils.json_to_sheet(data);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'Stok Harian');
+
+    // Generate buffer and trigger download
+    XLSX.writeFile(workbook, `Stok_Harian_${activeWarehouse?.name || 'Gudang'}_${targetDate || 'All'}.xlsx`);
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
@@ -208,18 +273,36 @@ const StokHarian: React.FC<StokHarianProps> = ({ role }) => {
           <p className="text-slate-500 font-medium italic">Track saldo stok pada tanggal spesifik (back-calculated).</p>
         </div>
 
-        <div className="flex bg-white p-2 rounded-2xl border border-slate-200 shadow-sm items-center gap-4 min-w-[240px]">
-          <div className="pl-2 pr-4 border-r border-slate-100 flex items-center gap-2">
-            <Calendar className="w-5 h-5 text-indigo-600" />
-            <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest leading-none">Pilih Tanggal</span>
+        <div className="flex items-center gap-3">
+          <button 
+            onClick={handleExportCSV}
+            className="flex items-center gap-2 px-4 py-3 bg-white border-2 border-slate-200 text-slate-600 rounded-2xl font-black uppercase tracking-widest hover:bg-slate-50 hover:border-slate-300 transition-all shadow-sm active:scale-95 text-[10px]"
+          >
+            <Download className="w-4 h-4" />
+            CSV
+          </button>
+
+          <button 
+            onClick={handleExportExcel}
+            className="flex items-center gap-2 px-4 py-3 bg-emerald-600 text-white rounded-2xl font-black uppercase tracking-widest hover:bg-emerald-700 transition-all shadow-lg shadow-emerald-200 active:scale-95 text-[10px]"
+          >
+            <FileSpreadsheet className="w-4 h-4" />
+            Excel
+          </button>
+
+          <div className="flex bg-white p-2 rounded-2xl border border-slate-200 shadow-sm items-center gap-4 min-w-[240px]">
+            <div className="pl-2 pr-4 border-r border-slate-100 flex items-center gap-2">
+              <Calendar className="w-5 h-5 text-indigo-600" />
+              <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest leading-none">Pilih Tanggal</span>
+            </div>
+            <input 
+              type="date"
+              value={targetDate}
+              max={new Date().toISOString().split('T')[0]}
+              onChange={(e) => setTargetDate(e.target.value)}
+              className="flex-1 bg-transparent border-none outline-none font-black text-lg text-slate-700 tabular-nums focus:ring-0"
+            />
           </div>
-          <input 
-            type="date"
-            value={targetDate}
-            max={new Date().toISOString().split('T')[0]}
-            onChange={(e) => setTargetDate(e.target.value)}
-            className="flex-1 bg-transparent border-none outline-none font-black text-lg text-slate-700 tabular-nums focus:ring-0"
-          />
         </div>
       </div>
 
@@ -280,9 +363,9 @@ const StokHarian: React.FC<StokHarianProps> = ({ role }) => {
                     <tr key={item.id} className="group hover:bg-slate-50/50 transition-colors">
                       <td className="px-8 py-6">
                         <div className="flex flex-col">
-                          <span className="text-sm font-black text-slate-900 uppercase group-hover:text-indigo-600 transition-colors leading-tight">{item.name}</span>
+                          <span className="text-[14px] font-bold text-[#3703ff] tracking-wider uppercase leading-[18px] self-start" style={{ fontFamily: 'Verdana, sans-serif' }}>{item.logicalSkuId}</span>
                           <div className="flex items-center gap-2 mt-1">
-                             <span className="text-[10px] font-black font-mono text-slate-400 tracking-wider bg-slate-100 px-1.5 py-0.5 rounded uppercase leading-none">{item.logicalSkuId}</span>
+                             <span className="text-[14px] font-black text-slate-900 uppercase group-hover:text-indigo-600 transition-colors leading-tight" style={{ fontFamily: "'Courier New', Courier, monospace" }}>{item.name}</span>
                              <span className="text-[9px] font-bold text-slate-300 uppercase tracking-tighter">Isi {pcsPerCarton}</span>
                           </div>
                         </div>

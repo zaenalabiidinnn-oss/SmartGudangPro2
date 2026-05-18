@@ -514,8 +514,8 @@ const DataScan: React.FC = () => {
                           </span>
                           <span className="text-[9px] font-black text-slate-300 tracking-widest uppercase">{log.receiptId}</span>
                         </div>
-                        <h4 className="text-base font-black text-slate-800 uppercase leading-none mb-1">{log.skuName}</h4>
-                        <p className="text-[10px] font-black font-mono text-slate-400 tracking-widest">{log.skuId}</p>
+                        <p className="text-base font-black text-[#2700ff] uppercase leading-none mb-1 font-mono tracking-widest border border-white px-1 rounded">{log.skuId}</p>
+                        <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{log.skuName}</h4>
                       </div>
                     </div>
 
