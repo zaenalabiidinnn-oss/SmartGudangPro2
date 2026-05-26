@@ -728,8 +728,8 @@ const DataRetur: React.FC = () => {
                           </td>
                           <td className="px-6 py-6">
                             <div className="flex flex-col">
-                              <span className="text-[12px] font-black text-slate-900 uppercase mb-1 leading-none">{log.skuName}</span>
-                              <span className="text-[10px] font-black font-mono text-slate-300 tracking-widest leading-none">#{log.skuId}</span>
+                              <span className="text-[14px] font-bold font-mono text-[#3703ff] tracking-wider uppercase leading-none mb-1">#{log.skuId}</span>
+                              <span className="text-xs font-black text-slate-500 uppercase leading-tight">{log.skuName}</span>
                             </div>
                           </td>
                           <td className="px-6 py-6 max-w-xs">
@@ -876,10 +876,10 @@ const DataRetur: React.FC = () => {
                             </td>
                             <td className="px-8 py-6">
                               <div className="flex flex-col">
-                                <span className="text-[12px] font-black text-slate-900 uppercase">
+                                <span className="text-[14px] font-bold font-mono text-[#3703ff] tracking-wider uppercase leading-none mb-1">#{log.skuId}</span>
+                                <span className="text-xs font-black text-slate-500 uppercase leading-tight">
                                   {skus.find(s => s.id === log.skuId)?.name || log.skuName}
                                 </span>
-                                <span className="text-[10px] font-bold text-slate-300 font-mono tracking-tighter">#{log.skuId}</span>
                               </div>
                             </td>
                             <td className="px-8 py-6">
@@ -957,10 +957,10 @@ const DataRetur: React.FC = () => {
                           <tr key={item.skuId} className="hover:bg-slate-50 transition-colors group">
                             <td className="px-6 py-5">
                               <div className="flex flex-col">
-                                <span className="text-[13px] font-black text-slate-900 uppercase group-hover:text-rose-600 transition-colors">
+                                <span className="text-[14px] font-bold font-mono text-[#3703ff] tracking-wider uppercase leading-none mb-1">#{item.skuId}</span>
+                                <span className="text-xs font-black text-slate-500 uppercase group-hover:text-rose-600 transition-colors leading-tight">
                                   {skus.find(s => s.id === item.skuId)?.name || item.skuName}
                                 </span>
-                                <span className="text-[10px] font-bold text-slate-300 font-mono mt-0.5">#{item.skuId}</span>
                               </div>
                             </td>
                             <td className="px-6 py-5 text-center">
@@ -1032,10 +1032,10 @@ const DataRetur: React.FC = () => {
                   <tr key={sku.id} className="hover:bg-slate-50 transition-colors group">
                     <td className="px-6 py-5">
                       <div className="flex flex-col">
-                        <span className="text-[13px] font-black text-slate-900 uppercase">
+                        <span className="text-[14px] font-bold font-mono text-[#3703ff] tracking-wider uppercase leading-none mb-1">#{sku.id}</span>
+                        <span className="text-xs font-black text-slate-500 uppercase leading-tight">
                           {sku.name}
                         </span>
-                        <span className="text-[10px] font-bold text-slate-300 font-mono mt-0.5">#{sku.id}</span>
                       </div>
                     </td>
                     <td className={`px-6 py-5 text-right font-black text-2xl tabular-nums tracking-tighter ${activeSubTab === 'HOLD' ? 'text-amber-500' : 'text-slate-700'}`}>

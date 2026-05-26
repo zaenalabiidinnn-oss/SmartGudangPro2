@@ -910,10 +910,10 @@ const HistoryLogs: React.FC<HistoryLogsProps> = ({ role }) => {
                       </td>
                       <td className="px-4 py-5 whitespace-nowrap">
                         <div className="flex flex-col">
-                          <span className="text-xs font-black text-slate-900 tabular-nums">
+                          <span className="text-[15px] text-[#5706ff] font-bold tabular-nums" style={{ fontFamily: 'Inter, sans-serif' }}>
                             {log.date || (log.createdAt?.toDate ? log.createdAt.toDate().toLocaleDateString('id-ID') : '-')}
                           </span>
-                          <span className="text-[9px] text-slate-400 font-bold uppercase tracking-tighter">
+                          <span className="text-[15px] text-[#000000] font-bold uppercase tracking-tighter font-mono">
                             {log.createdAt?.toDate ? log.createdAt.toDate().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }) : 'Recorded'}
                           </span>
                         </div>
