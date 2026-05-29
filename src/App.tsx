@@ -13,6 +13,7 @@ import { auth, db } from './lib/firebase';
 import { doc, setDoc, getDoc } from 'firebase/firestore';
 import { handleFirestoreError, OperationType } from './lib/errorHandlers';
 import { WarehouseProvider, useWarehouse } from './contexts/WarehouseContext';
+import { bootstrapDemoWarehouse } from './lib/demoBootstrap';
 import Navbar from './components/Navbar';
 import GudangManagement from './components/GudangManagement';
 import DataScan from './components/DataScan';
@@ -47,6 +48,9 @@ function AppContent() {
       if (u) {
         // Fetch user profile
         try {
+          if (u.email === 'demo@smartgudang.com') {
+            bootstrapDemoWarehouse().catch(e => console.error("Error bootstrapping demo warehouse:", e));
+          }
           const profileDoc = await getDoc(doc(db, 'users', u.uid));
           const isBootstrapAdmin = u.email === 'zaenalabiidinnn@gmail.com';
           
@@ -91,6 +95,41 @@ function AppContent() {
     } catch (err) {
       console.error(err);
       setAuthError('Login Google gagal.');
+    }
+  };
+
+  const handleDemoLogin = async () => {
+    setAuthError('');
+    setAuthLoading(true);
+    try {
+      await signInWithEmailAndPassword(auth, 'demo@smartgudang.com', 'demopass123');
+    } catch (err: any) {
+      if (err.code === 'auth/invalid-credential' || err.code === 'auth/user-not-found' || err.code === 'auth/wrong-password') {
+        // Create the demo user dynamically if it doesn't exist
+        try {
+          const userCredential = await createUserWithEmailAndPassword(auth, 'demo@smartgudang.com', 'demopass123');
+          await updateProfile(userCredential.user, { displayName: 'Petugas Demo' });
+          
+          // Save profile to Firestore with STAFF role
+          await setDoc(doc(db, 'users', userCredential.user.uid), {
+            uid: userCredential.user.uid,
+            email: userCredential.user.email,
+            displayName: 'Petugas Demo',
+            role: 'STAFF',
+            createdAt: new Date().toISOString()
+          });
+          
+          // Run bootstrap for the demo warehouse
+          await bootstrapDemoWarehouse();
+        } catch (createErr: any) {
+          console.error("Error creating demo user:", createErr);
+          setAuthError('Gagal menginisiasi akun demo: ' + createErr.message);
+        }
+      } else {
+        setAuthError('Gagal masuk akun demo: ' + (err.message || 'Error tidak diketahui'));
+      }
+    } finally {
+      setAuthLoading(false);
     }
   };
 
@@ -284,6 +323,16 @@ function AppContent() {
           >
             <img src="https://www.google.com/favicon.ico" className="w-4 h-4" alt="Google" />
             Login dengan Google
+          </button>
+
+          <button 
+            type="button"
+            onClick={handleDemoLogin}
+            disabled={authLoading}
+            className="w-full mt-3 bg-amber-500 hover:bg-amber-600 active:scale-[0.98] border border-amber-500 hover:border-amber-600 text-white rounded-2xl py-4 font-black uppercase text-[10px] tracking-widest transition-all flex items-center justify-center gap-3 shadow-lg shadow-amber-100/50 disabled:opacity-50"
+          >
+            {authLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Warehouse className="w-4 h-4" />}
+            Eksplorasi dengan Akun & Gudang Demo
           </button>
 
           <div className="mt-8 text-center">
