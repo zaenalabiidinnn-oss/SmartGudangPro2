@@ -49,17 +49,17 @@ service cloud.firestore {
     // Warehouse Management
     match /warehouses/{warehouseId} {
       allow read: if isSignedIn();
-      allow create: if (isAdmin() || (isSignedIn() && warehouseId == 'gudang-demo')) 
+      allow create: if isAdmin() 
         && incoming().id == warehouseId
         && incoming().name is string && incoming().name.size() <= 255;
-      allow update: if (isAdmin() || (isSignedIn() && warehouseId == 'gudang-demo')) && incoming().name is string;
+      allow update: if isAdmin() && incoming().name is string;
       allow delete: if isAdmin();
     }
 
     // SKU Management
     match /skus/{skuId} {
       allow read: if isSignedIn();
-      allow create: if (isAdmin() || (isSignedIn() && incoming().warehouseId == 'gudang-demo'))
+      allow create: if isAdmin()
         && incoming().name is string && incoming().name.size() <= 255
         && (incoming().currentStock is number || !('currentStock' in incoming()))
         && incoming().warehouseId is string
@@ -68,7 +68,6 @@ service cloud.firestore {
       allow update: if isSignedIn()
         && (
           isAdmin() || 
-          (isSignedIn() && existing().warehouseId == 'gudang-demo') ||
           (
             // Allow staff to update stock fields via background processes
             incoming().diff(existing()).affectedKeys().hasAll(['lastUpdated']) &&
@@ -81,7 +80,7 @@ service cloud.firestore {
         && (!('threshold' in incoming()) || incoming().threshold is number)
         && (!('pcsPerCarton' in incoming()) || incoming().pcsPerCarton is number)
         && incoming().warehouseId == existing().warehouseId;
-      allow delete: if isAdmin() || (isSignedIn() && existing().warehouseId == 'gudang-demo');
+      allow delete: if isAdmin();
     }
 
     // Transaction Records

@@ -593,7 +593,6 @@ const DataRetur: React.FC = () => {
                               type="number"
                               required
                               min="1"
-                              tabIndex={0}
                               value={quantity || ''}
                               onChange={(e) => setQuantity(Number(e.target.value))}
                               placeholder="0"
@@ -659,7 +658,7 @@ const DataRetur: React.FC = () => {
                     {quantity > 0 && (
                       <div className="pt-2 animate-in fade-in slide-in-from-top-2 duration-300">
                         <div className="bg-rose-50/50 rounded-2xl border border-rose-100 p-4 text-center">
-                          <p tabIndex={0} className="text-[10px] font-black text-rose-400 uppercase tracking-widest mb-1 outline-none transition-all focus:text-rose-600 focus:scale-105 active:scale-95 inline-block cursor-default">Total Retur</p>
+                          <p className="text-[10px] font-black text-rose-400 uppercase tracking-widest mb-1">Total Retur</p>
                           <p className="text-xl font-black text-rose-600 tabular-nums">
                             {inputMode === 'CARTON' 
                               ? `${numCartons} DUS ${extraPcs > 0 ? `+ ${extraPcs} PCS` : ''} (ISI ${pcsPerCartonOverride})` 

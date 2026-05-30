@@ -30,6 +30,8 @@ const DataScan: React.FC = () => {
     receiptId: '',
   });
 
+  const selectedSkuData = skus.find(s => s.internalId === selectedSku);
+
   // Unique values for filters
   const uniqueItems = Array.from(new Set(logs.map(l => l.skuId))).filter(Boolean).sort();
 
@@ -142,6 +144,22 @@ const DataScan: React.FC = () => {
       const selectedSkuData = skus.find(s => s.internalId === selectedSku);
       const logicalSkuId = selectedSkuData?.id || selectedSku;
       const skuName = selectedSkuData?.name;
+
+      const availableStock = selectedSkuData?.currentStock ?? 0;
+      if (availableStock <= 0) {
+        const msg = `Stok kosong! SKU ${logicalSkuId} tidak bisa melakukan scan keluar.`;
+        setError(msg);
+        window.alert(msg);
+        setIsProcessing(false);
+        return;
+      }
+      if (quantity > availableStock) {
+        const msg = `Stok tidak mencukupi! Stok saat ini: ${availableStock} pcs, sedangkan jumlah scan keluar: ${quantity} pcs.`;
+        setError(msg);
+        window.alert(msg);
+        setIsProcessing(false);
+        return;
+      }
 
       // Check for duplicates (same SKU + same Receipt ID + same Warehouse)
       const qCheck = query(
@@ -277,6 +295,15 @@ const DataScan: React.FC = () => {
               continue;
             }
 
+            const skuDocSnap = skuDoc.docs[0];
+            const skuDocData = skuDocSnap.data();
+            const availableStock = skuDocData?.currentStock ?? 0;
+            if (availableStock <= 0 || qty > availableStock) {
+              console.warn(`SKU ${skuCode} dilewati karena stok kosong atau tidak mencukupi (Stok: ${availableStock}, Qty: ${qty}).`);
+              failCount++;
+              continue;
+            }
+
             await processTransaction('SCAN', {
               skuId: skuCode,
               quantity: qty,
@@ -334,9 +361,22 @@ const DataScan: React.FC = () => {
             >
               <option value="">-- PILIH BARANG --</option>
               {skus.map(sku => (
-                <option key={sku.internalId} value={sku.internalId}>{sku.id} - {sku.name}</option>
+                <option key={sku.internalId} value={sku.internalId}>
+                  {sku.id} - {sku.name} (Stok: {sku.currentStock || 0})
+                </option>
               ))}
             </select>
+            {selectedSku && (
+              <div className="mt-1.5 ml-1 flex items-center gap-1.5">
+                <span className={`text-[10px] font-black px-2.5 py-1 rounded-lg uppercase tracking-wider ${
+                  (selectedSkuData?.currentStock || 0) <= 0 
+                    ? 'bg-rose-50 text-rose-600 border border-rose-100 animate-pulse' 
+                    : 'bg-emerald-50 text-emerald-700 border border-emerald-100'
+                }`}>
+                  Stok aktif: {selectedSkuData?.currentStock || 0} PCS {(selectedSkuData?.currentStock || 0) <= 0 && '(KOSONG - SCAN DIKUNCI)'}
+                </span>
+              </div>
+            )}
           </div>
 
           <div className="md:col-span-5 space-y-1.5">

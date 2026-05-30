@@ -298,6 +298,7 @@ const StokGudang: React.FC<StokGudangProps> = ({ role }) => {
 
         setIsBulkDeleting(true); // Reuse loading state for progress feedback
         let importCount = 0;
+        const localCreatedIds = new Set<string>();
 
         for (const row of data) {
           const skuId = String(row["Kode SKU"] || "").trim().toUpperCase();
@@ -307,31 +308,65 @@ const StokGudang: React.FC<StokGudangProps> = ({ role }) => {
           
           if (!skuId || !name) continue;
 
-          const internalId = `${activeWarehouse.id}_${skuId}`;
+          // Check if SKU already exists in this warehouse with the same SKU ID and name
+          const dbSku = skus.find(
+            s => s.id?.trim().toUpperCase() === skuId && s.name?.trim().toLowerCase() === name.toLowerCase()
+          );
+
+          // Build appropriate internalId (unique for same SKU + different Names)
+          let internalId: string;
+          let isAlreadyCreated = false;
+
+          if (dbSku) {
+            internalId = dbSku.internalId!;
+            isAlreadyCreated = true;
+          } else {
+            const nameSlug = name.toLowerCase().replace(/[^a-z0-9]/g, '-').slice(0, 50);
+            internalId = `${activeWarehouse.id}_${skuId}_${nameSlug}`;
+            
+            if (localCreatedIds.has(internalId)) {
+              isAlreadyCreated = true;
+            }
+          }
+
           const pcsPerCarton = 1; // Default for import if not specified
 
-          // 1. Create SKU
-          await setDoc(doc(db, 'skus', internalId), {
-            id: skuId,
-            name: name,
-            currentStock: 0, // Set to 0 then add via transaction if initialStock > 0
-            threshold: threshold,
-            pcsPerCarton: pcsPerCarton,
-            detailedStock: { ["1"]: { total: 0, boxes: 0 } },
-            createdAt: new Date(),
-            lastUpdated: new Date(),
-            warehouseId: activeWarehouse.id
-          });
+          // 1. Create or Merge SKU
+          if (!isAlreadyCreated) {
+            await setDoc(doc(db, 'skus', internalId), {
+              id: skuId,
+              name: name,
+              currentStock: 0, // Set to 0 then add via transaction if initialStock > 0
+              threshold: threshold,
+              pcsPerCarton: pcsPerCarton,
+              detailedStock: { ["1"]: { total: 0, boxes: 0 } },
+              createdAt: new Date(),
+              lastUpdated: new Date(),
+              warehouseId: activeWarehouse.id
+            });
+            localCreatedIds.add(internalId);
+          } else {
+            // Update metadata for existing SKU but shield its stock and creation fields
+            await setDoc(doc(db, 'skus', internalId), {
+              id: skuId,
+              name: name,
+              threshold: threshold,
+              pcsPerCarton: dbSku?.pcsPerCarton || pcsPerCarton,
+              lastUpdated: new Date(),
+              warehouseId: activeWarehouse.id
+            }, { merge: true });
+          }
 
           // 2. Add initial stock via transaction
           if (initialStock > 0) {
             await processTransaction('MASUK', {
               skuId: skuId,
+              skuName: name, // CRITICAL: supply skuName to distinguish between SKUs with same skuId but different names
               quantity: initialStock,
               date: new Date().toISOString().split('T')[0],
               warehouseId: activeWarehouse.id,
               reason: 'Import Awal (Excel)',
-              pcsPerCarton: pcsPerCarton
+              pcsPerCarton: dbSku?.pcsPerCarton || pcsPerCarton
             });
           }
           importCount++;

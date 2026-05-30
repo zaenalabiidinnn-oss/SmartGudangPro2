@@ -213,6 +213,14 @@ export const processTransaction = async (
         updateData.brokenStock = increment(-totalQuantity);
       } else {
         // NORMAL OUTGOING LOGIC (from currentStock)
+        const currentStockVal = skuData?.currentStock || 0;
+        if (currentStockVal <= 0) {
+          throw new Error(`Stok kosong! Barang ini memiliki 0 stok di menu STOK GUDANG.`);
+        }
+        if (totalQuantity > currentStockVal) {
+          throw new Error(`Stok tidak mencukupi! Stok saat ini: ${currentStockVal} pcs, sedangkan permintaan keluar: ${totalQuantity} pcs.`);
+        }
+
         updateData.currentStock = increment(-totalQuantity);
         updateData.totalKeluar = increment(totalQuantity);
 

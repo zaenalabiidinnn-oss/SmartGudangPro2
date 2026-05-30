@@ -143,6 +143,20 @@ const DataKeluar: React.FC = () => {
       return setError('Pilih gudang terlebih dahulu!');
     }
 
+    const availableStock = selectedSkuData?.currentStock ?? 0;
+    if (availableStock <= 0) {
+      const msg = `Stok kosong! SKU ${selectedSkuData?.id || selectedSku} tidak bisa melakukan pengeluaran barang.`;
+      window.alert(msg);
+      setError(msg);
+      return;
+    }
+    if (quantity > availableStock) {
+      const msg = `Stok tidak mencukupi! Stok saat ini: ${availableStock} pcs, sedangkan permintaan keluar: ${quantity} pcs.`;
+      window.alert(msg);
+      setError(msg);
+      return;
+    }
+
     setIsProcessing(true);
     try {
       await processTransaction('KELUAR', {
@@ -222,9 +236,22 @@ const DataKeluar: React.FC = () => {
                   >
                     <option value="">-- PILIH BARANG --</option>
                     {skus.map(sku => (
-                      <option key={sku.internalId} value={sku.internalId}>{sku.id} &bull; {sku.name} (Isi: {sku.pcsPerCarton || 1})</option>
+                      <option key={sku.internalId} value={sku.internalId}>
+                        {sku.id} &bull; {sku.name} (Stok: {sku.currentStock || 0} &bull; Isi: {sku.pcsPerCarton || 1})
+                      </option>
                     ))}
                   </select>
+                  {selectedSku && (
+                    <div className="mt-2 flex items-center gap-1.5">
+                      <span className={`text-[10px] font-black px-2.5 py-1 rounded-lg uppercase tracking-wider ${
+                        (selectedSkuData?.currentStock || 0) <= 0 
+                          ? 'bg-rose-50 text-rose-600 border border-rose-100 animate-pulse' 
+                          : 'bg-emerald-50 text-emerald-700 border border-emerald-100'
+                      }`}>
+                        Stok aktif: {selectedSkuData?.currentStock || 0} PCS {(selectedSkuData?.currentStock || 0) <= 0 && '(KOSONG - KELUAR DIKUNCI)'}
+                      </span>
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -506,8 +533,8 @@ const DataKeluar: React.FC = () => {
                         </td>
                         <td className="px-6 py-6 max-w-xs">
                            <div className="flex flex-col gap-1">
-                             <span className="text-xs font-bold text-slate-600 leading-relaxed">{log.reason}</span>
-                             <span className="text-[10px] font-bold text-slate-400 uppercase tracking-tighter">Ref: {log.receiptId || "-"}</span>
+                             <span className="text-[13px] font-bold text-slate-600 uppercase tracking-tighter">Ref: {log.receiptId || "-"}</span>
+                             <span className="text-xs font-bold text-black leading-relaxed">{log.reason}</span>
                            </div>
                         </td>
                         <td className="px-6 py-6 text-center">
