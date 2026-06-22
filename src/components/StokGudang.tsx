@@ -386,7 +386,7 @@ const StokGudang: React.FC<StokGudangProps> = ({ role }) => {
 
   const exportToExcel = () => {
     const itemsToExport = selectedIds.length > 0 
-      ? skus.filter(s => selectedIds.includes(s.id))
+      ? skus.filter(s => selectedIds.includes(s.internalId || s.id))
       : filteredSkus;
 
     if (itemsToExport.length === 0) {
@@ -398,14 +398,31 @@ const StokGudang: React.FC<StokGudangProps> = ({ role }) => {
     const dataToExport = itemsToExport.map(sku => {
       const row: any = {};
       const totalStock = sku.currentStock || 0;
-      const isi = sku.pcsPerCarton || 1;
-      
-      const totalBoxes = isi > 1 ? Math.floor(totalStock / isi) : 0;
-      const remPcs = isi > 1 ? totalStock % isi : totalStock;
 
-      const totalDusFormatted = isi > 1 
-        ? `${totalBoxes} DUS${remPcs > 0 ? ` + ${remPcs} PCS` : ''} (ISI ${isi})`
-        : `${totalStock} PCS (ECERAN)`;
+      // Aggregate logic: Total boxes across all sizes, Total loose pieces
+      const allPossibleSizes = Array.from(new Set([
+         1,
+         Number(sku.pcsPerCarton || 1),
+         ...(sku.detailedStock ? Object.keys(sku.detailedStock).map(Number) : [])
+      ]))
+      .filter(n => n >= 1)
+      .sort((a, b) => b - a);
+
+      const totalAllBoxes = allPossibleSizes.reduce((acc, size) => {
+         if (size <= 1) return acc;
+         const val = sku.detailedStock ? sku.detailedStock[String(size)] : null;
+         const totalV = (typeof val === 'object' && val !== null) ? (val as any).total : Number(val || 0);
+         return acc + Math.floor(totalV / size);
+      }, 0);
+
+      const totalAllRem = allPossibleSizes.reduce((acc, size) => {
+         const val = sku.detailedStock ? sku.detailedStock[String(size)] : null;
+         const totalV = (typeof val === 'object' && val !== null) ? (val as any).total : Number(val || 0);
+         if (size <= 1) return acc + totalV;
+         return acc + (totalV % size);
+      }, 0);
+
+      const totalDusFormatted = `${totalAllBoxes} DUS${totalAllRem > 0 ? ` + ${totalAllRem} PCS` : ''}`;
 
       if (exportFields.id) row['Kode SKU'] = sku.id;
       if (exportFields.name) row['Nama Barang'] = sku.name;
