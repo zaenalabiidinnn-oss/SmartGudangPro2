@@ -199,20 +199,55 @@ const StokHarian: React.FC<StokHarianProps> = ({ role }) => {
   const handleExportCSV = () => {
     const headers = ['Nama Barang', 'SKU ID', 'Isi', 'Masuk', 'Keluar', 'Retur', 'Stok Akhir', 'Total Stok (Dus)', 'Sisa (Pcs)'];
     const rows = (filteredSkus as HistoricalItem[]).map(item => {
-      const pcsPerCarton = item.pcsPerCarton || 1;
-      const boxes = pcsPerCarton > 1 ? Math.floor(item.currentStock / pcsPerCarton) : 0;
-      const remPcs = pcsPerCarton > 1 ? item.currentStock % pcsPerCarton : item.currentStock;
+      const allPossibleSizes = Array.from(new Set([
+         1,
+         Number(item.pcsPerCarton || 1),
+         ...(item.detailedStock ? Object.keys(item.detailedStock).map(Number) : [])
+      ]))
+      .filter(n => n >= 1)
+      .sort((a, b) => b - a);
+
+      const totalAllBoxes = allPossibleSizes.reduce((acc, size) => {
+         if (size <= 1) return acc;
+         const val = item.detailedStock ? item.detailedStock[String(size)] : null;
+         const totalV = (typeof val === 'object' && val !== null) ? (val as any).total : Number(val || 0);
+         return acc + Math.floor(totalV / size);
+      }, 0);
+
+      const totalAllRem = allPossibleSizes.reduce((acc, size) => {
+         const val = item.detailedStock ? item.detailedStock[String(size)] : null;
+         const totalV = (typeof val === 'object' && val !== null) ? (val as any).total : Number(val || 0);
+         if (size <= 1) return acc + totalV;
+         return acc + (totalV % size);
+      }, 0);
+
+      const detailsList: string[] = [];
+      allPossibleSizes.forEach(size => {
+         const val = item.detailedStock ? item.detailedStock[String(size)] : null;
+         const totalV = (typeof val === 'object' && val !== null) ? (val as any).total : Number(val || 0);
+         if (totalV <= 0) return;
+         if (size > 1) {
+            const b = Math.floor(totalV / size);
+            const r = totalV % size;
+            detailsList.push(`ISI ${size}: ${b} DUS${r > 0 ? ` + ${r} PCS` : ''}`);
+         } else {
+            detailsList.push(`ECERAN: ${totalV} PCS`);
+         }
+      });
+
+      const detailsStr = detailsList.length > 0 ? ` (${detailsList.join(', ')})` : '';
+      const totalDusFormatted = `${totalAllBoxes} DUS${totalAllRem > 0 ? ` + ${totalAllRem} PCS` : ''}${detailsStr}`;
       
       return [
         `"${item.name}"`,
         `"${item.logicalSkuId}"`,
-        pcsPerCarton,
+        item.pcsPerCarton || 1,
         item.masuk,
         item.keluar,
         item.retur,
         item.currentStock,
-        boxes,
-        remPcs
+        `"${totalDusFormatted}"`,
+        totalAllRem
       ];
     });
 
@@ -235,20 +270,55 @@ const StokHarian: React.FC<StokHarianProps> = ({ role }) => {
   const handleExportExcel = () => {
     const headers = ['Nama Barang', 'SKU ID', 'Isi', 'Masuk', 'Keluar', 'Retur', 'Stok Akhir', 'Total Stok (Dus)', 'Sisa (Pcs)'];
     const data = (filteredSkus as HistoricalItem[]).map(item => {
-      const pcsPerCarton = item.pcsPerCarton || 1;
-      const boxes = pcsPerCarton > 1 ? Math.floor(item.currentStock / pcsPerCarton) : 0;
-      const remPcs = pcsPerCarton > 1 ? item.currentStock % pcsPerCarton : item.currentStock;
+      const allPossibleSizes = Array.from(new Set([
+         1,
+         Number(item.pcsPerCarton || 1),
+         ...(item.detailedStock ? Object.keys(item.detailedStock).map(Number) : [])
+      ]))
+      .filter(n => n >= 1)
+      .sort((a, b) => b - a);
+
+      const totalAllBoxes = allPossibleSizes.reduce((acc, size) => {
+         if (size <= 1) return acc;
+         const val = item.detailedStock ? item.detailedStock[String(size)] : null;
+         const totalV = (typeof val === 'object' && val !== null) ? (val as any).total : Number(val || 0);
+         return acc + Math.floor(totalV / size);
+      }, 0);
+
+      const totalAllRem = allPossibleSizes.reduce((acc, size) => {
+         const val = item.detailedStock ? item.detailedStock[String(size)] : null;
+         const totalV = (typeof val === 'object' && val !== null) ? (val as any).total : Number(val || 0);
+         if (size <= 1) return acc + totalV;
+         return acc + (totalV % size);
+      }, 0);
+
+      const detailsList: string[] = [];
+      allPossibleSizes.forEach(size => {
+         const val = item.detailedStock ? item.detailedStock[String(size)] : null;
+         const totalV = (typeof val === 'object' && val !== null) ? (val as any).total : Number(val || 0);
+         if (totalV <= 0) return;
+         if (size > 1) {
+            const b = Math.floor(totalV / size);
+            const r = totalV % size;
+            detailsList.push(`ISI ${size}: ${b} DUS${r > 0 ? ` + ${r} PCS` : ''}`);
+         } else {
+            detailsList.push(`ECERAN: ${totalV} PCS`);
+         }
+      });
+
+      const detailsStr = detailsList.length > 0 ? ` (${detailsList.join(', ')})` : '';
+      const totalDusFormatted = `${totalAllBoxes} DUS${totalAllRem > 0 ? ` + ${totalAllRem} PCS` : ''}${detailsStr}`;
       
       return {
         'Nama Barang': item.name,
         'SKU ID': item.logicalSkuId,
-        'Isi': pcsPerCarton,
+        'Isi': item.pcsPerCarton || 1,
         'Masuk': item.masuk,
         'Keluar': item.keluar,
         'Retur': item.retur,
         'Stok Akhir': item.currentStock,
-        'Total Stok (Dus)': boxes,
-        'Sisa (Pcs)': remPcs
+        'Total Stok (Dus)': totalDusFormatted,
+        'Sisa (Pcs)': totalAllRem
       };
     });
 
