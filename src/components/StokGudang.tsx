@@ -422,7 +422,22 @@ const StokGudang: React.FC<StokGudangProps> = ({ role }) => {
          return acc + (totalV % size);
       }, 0);
 
-      const totalDusFormatted = `${totalAllBoxes} DUS${totalAllRem > 0 ? ` + ${totalAllRem} PCS` : ''}`;
+      const detailsList: string[] = [];
+      allPossibleSizes.forEach(size => {
+         const val = sku.detailedStock ? sku.detailedStock[String(size)] : null;
+         const totalV = (typeof val === 'object' && val !== null) ? (val as any).total : Number(val || 0);
+         if (totalV <= 0) return;
+         if (size > 1) {
+            const b = Math.floor(totalV / size);
+            const r = totalV % size;
+            detailsList.push(`ISI ${size}: ${b} DUS${r > 0 ? ` + ${r} PCS` : ''}`);
+         } else {
+            detailsList.push(`ECERAN: ${totalV} PCS`);
+         }
+      });
+
+      const detailsStr = detailsList.length > 0 ? ` (${detailsList.join(', ')})` : '';
+      const totalDusFormatted = `${totalAllBoxes} DUS${totalAllRem > 0 ? ` + ${totalAllRem} PCS` : ''}${detailsStr}`;
 
       if (exportFields.id) row['Kode SKU'] = sku.id;
       if (exportFields.name) row['Nama Barang'] = sku.name;
