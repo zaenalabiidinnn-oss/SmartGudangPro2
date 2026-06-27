@@ -27,6 +27,147 @@ const cleanData = (obj: any) => {
   return result;
 };
 
+// Helper to compute new detailed stock object structurally
+export function computeNewDetailedStock(
+  detailedStockRaw: any,
+  skuPcsPerCarton: number,
+  operation: 'ADD' | 'SUBTRACT',
+  targetSize: number,
+  qty: number
+): Record<string, { total: number; boxes: number }> {
+  const nextDetailedStock: Record<string, { total: number; boxes: number }> = {};
+  
+  // 1. Standardize existing detailed stock
+  const rawObj = detailedStockRaw || {};
+  Object.keys(rawObj).forEach(k => {
+    const val = rawObj[k];
+    const cnt = (typeof val === 'object' && val !== null) ? ((val as any).total || 0) : Number(val || 0);
+    const size = Number(k);
+    const boxes = size > 1 ? Math.floor(cnt / size) : 0;
+    nextDetailedStock[k] = { total: cnt, boxes };
+  });
+
+  // Ensure "1" exists
+  if (!nextDetailedStock["1"]) {
+    nextDetailedStock["1"] = { total: 0, boxes: 0 };
+  }
+
+  const tSize = targetSize || skuPcsPerCarton || 1;
+  const tKey = String(tSize);
+  
+  if (!nextDetailedStock[tKey]) {
+    nextDetailedStock[tKey] = { total: 0, boxes: 0 };
+  }
+
+  if (operation === 'SUBTRACT') {
+    let qtyToDeduct = qty;
+
+    // A. Subtract from targeted size group first
+    const currentTargetTotal = nextDetailedStock[tKey].total;
+    if (currentTargetTotal >= qtyToDeduct) {
+      nextDetailedStock[tKey].total -= qtyToDeduct;
+      qtyToDeduct = 0;
+    } else {
+      nextDetailedStock[tKey].total = 0;
+      qtyToDeduct -= currentTargetTotal;
+    }
+
+    // B. Subtract from Eceran if there is still remaining subtraction
+    if (qtyToDeduct > 0) {
+      const eceranTotal = nextDetailedStock["1"].total;
+      if (eceranTotal >= qtyToDeduct) {
+        nextDetailedStock["1"].total -= qtyToDeduct;
+        qtyToDeduct = 0;
+      } else {
+        nextDetailedStock["1"].total = 0;
+        qtyToDeduct -= eceranTotal;
+      }
+    }
+
+    // C. Break other cartons if still needed
+    if (qtyToDeduct > 0) {
+      const availableSizes = Object.keys(nextDetailedStock)
+        .map(Number)
+        .filter(s => s > 1 && nextDetailedStock[String(s)].total > 0)
+        .sort((a, b) => b - a); // largest first
+
+      for (const size of availableSizes) {
+        const sKey = String(size);
+        while (qtyToDeduct > 0 && nextDetailedStock[sKey].total >= size) {
+          // Open 1 carton of size S
+          nextDetailedStock[sKey].total -= size;
+          nextDetailedStock["1"].total += size;
+
+          const openEceran = nextDetailedStock["1"].total;
+          if (openEceran >= qtyToDeduct) {
+            nextDetailedStock["1"].total -= qtyToDeduct;
+            qtyToDeduct = 0;
+            break;
+          } else {
+            nextDetailedStock["1"].total = 0;
+            qtyToDeduct -= openEceran;
+          }
+        }
+        if (qtyToDeduct <= 0) break;
+      }
+    }
+
+    // D. Final safety fallback
+    if (qtyToDeduct > 0) {
+      nextDetailedStock["1"].total -= qtyToDeduct;
+    }
+
+  } else {
+    // operation === 'ADD'
+    nextDetailedStock[tKey].total += qty;
+  }
+
+  // 2. Post-processing / Standardization & Carton coalescence
+  // A. For any S > 1, any fractional loose/broken remainder pieces must be moved to eceran
+  Object.keys(nextDetailedStock).forEach(k => {
+    const size = Number(k);
+    if (size > 1) {
+      const cnt = nextDetailedStock[k].total;
+      const fullBoxes = Math.floor(cnt / size);
+      const remainder = cnt % size;
+      
+      if (remainder > 0) {
+        nextDetailedStock["1"].total += remainder;
+        nextDetailedStock[k] = {
+          total: fullBoxes * size,
+          boxes: fullBoxes
+        };
+      } else {
+        nextDetailedStock[k] = {
+          total: cnt,
+          boxes: fullBoxes
+        };
+      }
+    }
+  });
+
+  // B. Consolidate eceran back into larger cartons if it piles up
+  if (skuPcsPerCarton > 1) {
+    const mainKey = String(skuPcsPerCarton);
+    nextDetailedStock[mainKey] = nextDetailedStock[mainKey] || { total: 0, boxes: 0 };
+    
+    const eceranTotal = nextDetailedStock["1"].total;
+    if (eceranTotal >= skuPcsPerCarton) {
+      const newCartons = Math.floor(eceranTotal / skuPcsPerCarton);
+      const pcsToCoalesce = newCartons * skuPcsPerCarton;
+      
+      nextDetailedStock[mainKey].total += pcsToCoalesce;
+      nextDetailedStock[mainKey].boxes = Math.floor(nextDetailedStock[mainKey].total / skuPcsPerCarton);
+      nextDetailedStock["1"].total -= pcsToCoalesce;
+    }
+  }
+
+  // Set boxes for eceran size 1 to 0
+  nextDetailedStock["1"].boxes = 0;
+
+  return nextDetailedStock;
+}
+
 // Helper to find SKU document by trying both prefixed and non-prefixed ID
 const findSku = async (warehouseId: string, skuId: string, name?: string) => {
   const cleanId = skuId.trim();
@@ -204,7 +345,14 @@ export const processTransaction = async (
 
     if (isOutgoing) {
       // Determine packaging size
-      const usedPcsPerCarton = (data.pcsPerCarton && data.pcsPerCarton > 1) ? data.pcsPerCarton : (skuPcsPerCarton || 1);
+      let usedPcsPerCarton = 1;
+      if (data.pcsPerCarton !== undefined) {
+        usedPcsPerCarton = data.pcsPerCarton;
+      } else if (type === 'SCAN') {
+        usedPcsPerCarton = 1;
+      } else {
+        usedPcsPerCarton = skuPcsPerCarton || 1;
+      }
       const sizeKey = String(usedPcsPerCarton);
 
       if (data.isBrokenStockKeluar) {
@@ -244,20 +392,21 @@ export const processTransaction = async (
           }));
         }
         
-        // Update the specific size group
-        updateData[`detailedStock.${sizeKey}.total`] = increment(-totalQuantity);
-        
-        // Calculate resulting boxes for this size group
-        const currentSizeTotal = detailedStock[sizeKey]?.total || 0;
-        const newSizeTotal = currentSizeTotal - totalQuantity;
-        updateData[`detailedStock.${sizeKey}.boxes`] = usedPcsPerCarton > 1 ? Math.floor(newSizeTotal / usedPcsPerCarton) : 0;
+        // Update the specific size group with box opening and leftover conversion to eceran
+        updateData.detailedStock = computeNewDetailedStock(
+          detailedStock,
+          skuPcsPerCarton,
+          'SUBTRACT',
+          usedPcsPerCarton,
+          totalQuantity
+        );
 
         // Record log for history only for non-disposal transactions
         logs.push({
           ...data,
           quantity: totalQuantity,
-          pcsPerCarton: data.pcsPerCarton ?? skuPcsPerCarton, // Keep original for log record
-          inputMode: (data.pcsPerCarton && data.pcsPerCarton > 1) ? 'CARTON' : 'PCS',
+          pcsPerCarton: usedPcsPerCarton, // Save the actual packaging size used
+          inputMode: usedPcsPerCarton > 1 ? 'CARTON' : 'PCS',
           skuName,
           type: logType,
           createdAt: now,
@@ -285,12 +434,13 @@ export const processTransaction = async (
         } else {
           // MASUK and RESTOCK
           updateData.currentStock = increment(totalQuantity);
-          updateData[`detailedStock.${sizeKey}.total`] = increment(totalQuantity);
-          
-          // Use absolute calculation from the new total for boxes to keep them in sync
-          const currentTotal = detailedStock[sizeKey]?.total || 0;
-          const newTotal = currentTotal + totalQuantity;
-          updateData[`detailedStock.${sizeKey}.boxes`] = usedPcsPerCarton > 0 ? Math.floor(newTotal / usedPcsPerCarton) : 0;
+          updateData.detailedStock = computeNewDetailedStock(
+            detailedStock,
+            skuPcsPerCarton,
+            'ADD',
+            divisor,
+            totalQuantity
+          );
         }
 
         if (logType === 'MASUK' || logType === 'RESTOCK') {
@@ -599,12 +749,17 @@ export const deleteTransaction = async (type: TransactionType, logId: string) =>
 
             const sizeKey = String(data.pcsPerCarton ?? skuSnap.data().pcsPerCarton ?? 1);
             const divisor = Number(sizeKey);
-            updateData[`detailedStock.${sizeKey}.total`] = increment(reversedStockQty);
+
+            const detailedStock = skuSnap.data().detailedStock || {};
+            const skuPcsPerCarton = skuSnap.data().pcsPerCarton ?? 1;
             
-            const fullCartons = divisor > 1 ? Math.floor(quantity / divisor) : 0;
-            if (fullCartons !== 0) {
-              updateData[`detailedStock.${sizeKey}.boxes`] = increment(isOutgoing ? fullCartons : -fullCartons);
-            }
+            updateData.detailedStock = computeNewDetailedStock(
+              detailedStock,
+              skuPcsPerCarton,
+              isOutgoing ? 'ADD' : 'SUBTRACT',
+              divisor,
+              quantity
+            );
         }
 
         // Adjust Summaries
