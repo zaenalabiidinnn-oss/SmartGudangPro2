@@ -391,6 +391,9 @@ export const processTransaction = async (
             warehouseId: data.warehouseId
           }));
         }
+        if (reasonLower.includes('hold')) {
+          updateData.holdStock = increment(totalQuantity);
+        }
         
         // Update the specific size group with box opening and leftover conversion to eceran
         updateData.detailedStock = computeNewDetailedStock(
@@ -631,18 +634,16 @@ export const deleteTransaction = async (type: TransactionType, logId: string) =>
           updateData.totalMasuk = increment(-quantity);
           
           const rawSize = data.pcsPerCarton ?? skuSnap.data().pcsPerCarton;
-          const sizeKey = String(rawSize || 1);
           const usedPcsPerCarton = Number(rawSize || 1);
           const detailedStock = skuSnap.data().detailedStock || {};
-          const currentVal = detailedStock[sizeKey];
           
-          if (typeof currentVal === 'object' && currentVal !== null) {
-            const newTotal = (currentVal.total || 0) - quantity;
-            const newBoxes = usedPcsPerCarton > 0 ? Math.floor(Math.max(0, newTotal) / usedPcsPerCarton) : 0;
-            updateData[`detailedStock.${sizeKey}`] = { total: newTotal, boxes: newBoxes };
-          } else {
-            updateData[`detailedStock.${sizeKey}`] = increment(-quantity);
-          }
+          updateData.detailedStock = computeNewDetailedStock(
+            detailedStock,
+            skuSnap.data().pcsPerCarton ?? 1,
+            'SUBTRACT',
+            usedPcsPerCarton,
+            quantity
+          );
 
           // Adjust Summaries for JUAL target reversal (only JUAL affects summaries)
           const skuName = skuSnap.data().name;
@@ -743,6 +744,9 @@ export const deleteTransaction = async (type: TransactionType, logId: string) =>
                     const shadowSnap = await getDocs(shadowQ);
                     shadowSnap.forEach(doc => batch.delete(doc.ref));
                 }
+                if (reasonLower.includes('hold')) {
+                    updateData.holdStock = increment(-quantity);
+                }
             } else {
               updateData.totalMasuk = increment(-quantity);
             }
@@ -818,26 +822,31 @@ export const inspectRetur = async (
 
   try {
     // 1. Find and Consume Return Logs
-    // We search for both logical and internal SKU IDs to be robust
+    // We search for multiple variations of logical and internal/slugged SKU IDs to be robust
     const cleanId = data.skuId.trim();
     const logicalId = cleanId.startsWith(data.warehouseId + '_') 
       ? cleanId.substring(data.warehouseId.length + 1) 
       : cleanId;
     const internalId = `${data.warehouseId}_${logicalId}`;
 
-    const queryIds = [...new Set([logicalId, internalId])];
+    const queryIds = [...new Set([
+      logicalId,
+      internalId,
+      skuData.id,
+      internalSkuId,
+      data.skuId
+    ])].filter(Boolean);
 
     const q = query(
       returRecordsRef,
       where('warehouseId', '==', data.warehouseId),
       where('skuId', 'in', queryIds)
-      // Removed orderBy to avoid index issues, we'll sort in memory
     );
 
     const logsSnapRaw = await getDocs(q);
     
     if (logsSnapRaw.empty) {
-      console.error(`[inspectRetur] NO RETUR LOGS FOUND for SKU: ${data.skuId} (tried ${logicalId}, ${internalId})`);
+      console.error(`[inspectRetur] NO RETUR LOGS FOUND for SKU: ${data.skuId} (tried ${queryIds.join(', ')})`);
       throw new Error('Data retur tidak ditemukan untuk SKU ini');
     }
 
@@ -887,18 +896,17 @@ export const inspectRetur = async (
       updateData.totalMasuk = increment(data.quantity);
       
       const rawSize = data.pcsPerCarton ?? skuData.pcsPerCarton;
-      const sizeKey = String(rawSize ?? 1);
       const divisor = rawSize || 1;
       const detailedStock = skuData.detailedStock || {};
-      const currentVal = detailedStock[sizeKey];
       
-      if (typeof currentVal === 'object' && currentVal !== null) {
-        const newTotal = (currentVal.total || 0) + data.quantity;
-        const newBoxes = rawSize === 0 ? 0 : Math.floor(newTotal / divisor);
-        updateData[`detailedStock.${sizeKey}`] = { total: newTotal, boxes: newBoxes };
-      } else {
-        updateData[`detailedStock.${sizeKey}`] = increment(data.quantity);
-      }
+      // Utilize standardized helper to handle carton division and loose sisa pieces correctly
+      updateData.detailedStock = computeNewDetailedStock(
+        detailedStock,
+        skuData.pcsPerCarton ?? 1,
+        'ADD',
+        divisor,
+        data.quantity
+      );
 
       // Create MASUK record for Main Menu Database (History)
       const masukRef = doc(collection(db, 'history/masuk/records'));
@@ -1003,18 +1011,16 @@ export const releaseFromHold = async (
     };
 
     const rawSize = data.pcsPerCarton ?? skuData.pcsPerCarton;
-    const sizeKey = String(rawSize ?? 1);
     const divisor = rawSize || 1;
     const detailedStock = skuData.detailedStock || {};
-    const currentVal = detailedStock[sizeKey];
     
-    if (typeof currentVal === 'object' && currentVal !== null) {
-      const newTotal = (currentVal.total || 0) + data.quantity;
-      const newBoxes = rawSize === 0 ? 0 : Math.floor(newTotal / divisor);
-      updateData[`detailedStock.${sizeKey}`] = { total: newTotal, boxes: newBoxes };
-    } else {
-      updateData[`detailedStock.${sizeKey}`] = increment(data.quantity);
-    }
+    updateData.detailedStock = computeNewDetailedStock(
+      detailedStock,
+      skuData.pcsPerCarton ?? 1,
+      'ADD',
+      divisor,
+      data.quantity
+    );
 
     const dateStr = new Date().toISOString().split('T')[0];
     const monthStr = dateStr.substring(0, 7);
@@ -1112,18 +1118,16 @@ export const releaseFromBroken = async (
     };
 
     const rawSize = data.pcsPerCarton ?? skuData.pcsPerCarton;
-    const sizeKey = String(rawSize ?? 1);
     const divisor = rawSize || 1;
     const detailedStock = skuData.detailedStock || {};
-    const currentVal = detailedStock[sizeKey];
     
-    if (typeof currentVal === 'object' && currentVal !== null) {
-      const newTotal = (currentVal.total || 0) + data.quantity;
-      const newBoxes = rawSize === 0 ? 0 : Math.floor(newTotal / divisor);
-      updateData[`detailedStock.${sizeKey}`] = { total: newTotal, boxes: newBoxes };
-    } else {
-      updateData[`detailedStock.${sizeKey}`] = increment(data.quantity);
-    }
+    updateData.detailedStock = computeNewDetailedStock(
+      detailedStock,
+      skuData.pcsPerCarton ?? 1,
+      'ADD',
+      divisor,
+      data.quantity
+    );
 
     const dateStr = new Date().toISOString().split('T')[0];
     const monthStr = dateStr.substring(0, 7);

@@ -406,7 +406,7 @@ const DataKeluar: React.FC = () => {
                 <div className="flex items-center justify-between ml-1">
                   <label className="text-[10px] font-black uppercase tracking-widest text-slate-400">Alasan Pengeluaran</label>
                   <div className="flex gap-1.5 font-bold">
-                    {['Rusak', 'Sample', 'Giveaway'].map(tag => (
+                    {['Rusak', 'Sample', 'Hold'].map(tag => (
                       <button
                         key={tag}
                         type="button"
@@ -421,7 +421,7 @@ const DataKeluar: React.FC = () => {
                 <textarea
                   value={reason}
                   onChange={(e) => setReason(e.target.value)}
-                  placeholder="Sebutkan alasan: Rusak, Sample, Giveaway, dll..."
+                  placeholder="Sebutkan alasan: Rusak, Sample, Hold, dll..."
                   className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-4 focus:ring-orange-100 focus:border-orange-400 focus:bg-white outline-none transition-all font-bold text-slate-700 text-sm h-24 resize-none placeholder:font-normal placeholder:text-slate-300"
                 />
               </div>

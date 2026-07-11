@@ -5,7 +5,7 @@ import { handleFirestoreError, OperationType } from '../lib/errorHandlers';
 import { useWarehouse } from '../contexts/WarehouseContext';
 import { processTransaction, deleteTransaction, inspectRetur, releaseFromHold, disposeBrokenStock, releaseFromBroken, importReturLogs, bulkUpdateSpecialStock } from '../services/rekapService';
 import { SKU } from '../types';
-import { Trash2, RotateCcw, AlertCircle, PackageCheck, PauseCircle, XCircle, Wrench, CheckCircle2, History, X, Download, Upload, FileSpreadsheet, ChevronDown } from 'lucide-react';
+import { Trash2, RotateCcw, AlertCircle, PackageCheck, PauseCircle, XCircle, Wrench, CheckCircle2, History, X, Download, Upload, FileSpreadsheet, ChevronDown, ChevronLeft, ChevronRight } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import * as XLSX from 'xlsx';
 
@@ -46,6 +46,9 @@ const DataRetur: React.FC = () => {
   .filter(n => n >= 1)
   .sort((a, b) => b - a);
   const [logs, setLogs] = useState<LogEntry[]>([]);
+  const [inputPage, setInputPage] = useState(1);
+  const [inspeksiPage, setInspeksiPage] = useState(1);
+  const itemsPerPage = 50;
   const [error, setError] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
   const [isDeleting, setIsDeleting] = useState<string | null>(null);
@@ -235,7 +238,7 @@ const DataRetur: React.FC = () => {
       collection(db, 'history/retur/records'),
       where('warehouseId', '==', activeWarehouse.id),
       orderBy('createdAt', 'desc'),
-      limit(50)
+      limit(500)
     );
     const unsubLogs = onSnapshot(q, (snap) => {
       setLogs(snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as LogEntry)));
@@ -249,6 +252,11 @@ const DataRetur: React.FC = () => {
       unsubLogs();
     };
   }, [activeWarehouse]);
+
+  useEffect(() => {
+    setInputPage(1);
+    setInspeksiPage(1);
+  }, [activeWarehouse, activeSubTab, viewMode]);
 
   const handleDelete = async (id: string) => {
     if (confirmDeleteId !== id) {
@@ -336,25 +344,29 @@ const DataRetur: React.FC = () => {
     }
   };
 
-  const summaryBySku = logs.reduce((acc, log) => {
-    const key = log.skuId;
-    if (!acc[key]) {
-      acc[key] = { 
-        skuId: log.skuId, 
-        skuName: log.skuName, 
-        totalQty: 0, 
-        count: 0,
-        logIds: [] as string[]
+  const summaryData = skus
+    .filter(sku => (sku.returnStock || 0) > 0)
+    .map(sku => {
+      const skuLogs = logs.filter(log => log.skuId === sku.id);
+      return {
+        skuId: sku.id,
+        skuName: sku.name,
+        totalQty: sku.returnStock || 0,
+        count: skuLogs.length || 1,
+        logIds: skuLogs.map(l => l.id)
       };
-    }
-    acc[key].totalQty += log.quantity;
-    acc[key].count += 1;
-    acc[key].logIds.push(log.id);
-    return acc;
-  }, {} as Record<string, { skuId: string; skuName: string; totalQty: number; count: number; logIds: string[] }>);
-
-  const summaryData = (Object.values(summaryBySku) as { skuId: string; skuName: string; totalQty: number; count: number; logIds: string[] }[])
+    })
     .sort((a, b) => b.totalQty - a.totalQty);
+
+  // Pagination for Input subtab (Activity Stream)
+  const totalInputPages = Math.ceil(logs.length / itemsPerPage) || 1;
+  const activeInputPage = Math.min(inputPage, totalInputPages) || 1;
+  const paginatedInputLogs = logs.slice((activeInputPage - 1) * itemsPerPage, activeInputPage * itemsPerPage);
+
+  // Pagination for Inspeksi subtab (Daftar Riwayat)
+  const totalInspeksiPages = Math.ceil(logs.length / itemsPerPage) || 1;
+  const activeInspeksiPage = Math.min(inspeksiPage, totalInspeksiPages) || 1;
+  const paginatedInspeksiLogs = logs.slice((activeInspeksiPage - 1) * itemsPerPage, activeInspeksiPage * itemsPerPage);
 
   return (
     <div className="space-y-8">
@@ -721,7 +733,7 @@ const DataRetur: React.FC = () => {
                             </div>
                           </td>
                         </tr>
-                      ) : logs.map((log) => (
+                      ) : paginatedInputLogs.map((log) => (
                         <tr key={log.id} className="group hover:bg-slate-50/50 transition-colors">
                           <td className="px-8 py-6 whitespace-nowrap">
                             <span className="text-[11px] font-black text-slate-900">{log.date}</span>
@@ -810,6 +822,65 @@ const DataRetur: React.FC = () => {
                     </tbody>
                   </table>
                 </div>
+
+                {/* Pagination Controls */}
+                {totalInputPages > 1 && (
+                  <div className="px-8 py-5 border-t border-slate-50 flex flex-col sm:flex-row items-center justify-between gap-4 bg-white">
+                    <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">
+                      Menampilkan <span className="text-slate-900 font-black tabular-nums">{Math.min(logs.length, (activeInputPage - 1) * itemsPerPage + 1)}</span> - <span className="text-slate-900 font-black tabular-nums">{Math.min(logs.length, activeInputPage * itemsPerPage)}</span> dari <span className="text-slate-900 font-black tabular-nums">{logs.length}</span> data
+                    </p>
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => setInputPage(Math.max(1, activeInputPage - 1))}
+                        disabled={activeInputPage === 1}
+                        className="p-2 rounded-xl border border-slate-100 text-slate-500 hover:bg-slate-50 disabled:opacity-40 disabled:hover:bg-transparent transition-all"
+                      >
+                        <ChevronLeft className="w-4 h-4" />
+                      </button>
+                      {Array.from({ length: totalInputPages }, (_, idx) => idx + 1)
+                        .filter(p => p === 1 || p === totalInputPages || Math.abs(p - activeInputPage) <= 1)
+                        .reduce((acc, p, idx, arr) => {
+                          if (idx > 0 && p - arr[idx - 1] > 1) {
+                            acc.push(-1); // represent ellipsis
+                          }
+                          acc.push(p);
+                          return acc;
+                        }, [] as number[])
+                        .map((p, idx) => {
+                          if (p === -1) {
+                            return (
+                              <span key={`dots-input-${idx}`} className="px-3 py-1.5 text-xs font-black text-slate-300">
+                                ...
+                              </span>
+                            );
+                          }
+                          return (
+                            <button
+                              key={`page-input-${p}`}
+                              type="button"
+                              onClick={() => setInputPage(p)}
+                              className={`px-3 py-1.5 rounded-xl text-xs font-black transition-all border ${
+                                activeInputPage === p
+                                  ? 'bg-rose-600 border-rose-600 text-white shadow-md shadow-rose-100'
+                                  : 'bg-white border-slate-100 text-slate-500 hover:bg-slate-50'
+                              }`}
+                            >
+                              {p}
+                            </button>
+                          );
+                        })}
+                      <button
+                        type="button"
+                        onClick={() => setInputPage(Math.min(totalInputPages, activeInputPage + 1))}
+                        disabled={activeInputPage === totalInputPages}
+                        className="p-2 rounded-xl border border-slate-100 text-slate-500 hover:bg-slate-50 disabled:opacity-40 disabled:hover:bg-transparent transition-all"
+                      >
+                        <ChevronRight className="w-4 h-4" />
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           </motion.div>
@@ -844,96 +915,157 @@ const DataRetur: React.FC = () => {
 
               <div className="flex-1 overflow-x-auto">
                 {viewMode === 'LOG' ? (
-                  <table className="w-full text-left">
-                    <thead>
-                      <tr className="bg-slate-50/50 text-slate-400 text-[9px] uppercase font-black tracking-widest">
-                        <th className="px-8 py-4">Informasi Waktu</th>
-                        <th className="px-8 py-4">Detail SKU</th>
-                        <th className="px-8 py-4">Ref Nota / SJ</th>
-                        <th className="px-8 py-4">Keterangan</th>
-                        <th className="px-8 py-4 text-center">Jumlah Item</th>
-                        <th className="px-8 py-4"></th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-50">
-                      <AnimatePresence mode="popLayout">
-                        {logs.length === 0 ? (
-                          <tr>
-                            <td colSpan={6} className="py-24 text-center">
-                              <RotateCcw className="w-12 h-12 text-slate-100 mx-auto mb-4" />
-                              <p className="text-xs font-black text-slate-300 uppercase tracking-widest">Belum ada data retur yang tercatat</p>
-                            </td>
-                          </tr>
-                        ) : logs.map(log => (
-                          <motion.tr key={log.id} layout initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="group hover:bg-slate-50/50 transition-colors">
-                            <td className="px-8 py-6">
-                              <div className="flex flex-col">
-                                <span className="text-[12px] font-black text-slate-900">{log.date}</span>
-                                <span className="text-[10px] text-slate-400 font-bold tabular-nums">
-                                  {log.createdAt?.toDate?.()?.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }) || '...'}
+                  <>
+                    <table className="w-full text-left">
+                      <thead>
+                        <tr className="bg-slate-50/50 text-slate-400 text-[9px] uppercase font-black tracking-widest">
+                          <th className="px-8 py-4">Informasi Waktu</th>
+                          <th className="px-8 py-4">Detail SKU</th>
+                          <th className="px-8 py-4">Ref Nota / SJ</th>
+                          <th className="px-8 py-4">Keterangan</th>
+                          <th className="px-8 py-4 text-center">Jumlah Item</th>
+                          <th className="px-8 py-4"></th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-50">
+                        <AnimatePresence mode="popLayout">
+                          {logs.length === 0 ? (
+                            <tr>
+                              <td colSpan={6} className="py-24 text-center">
+                                <RotateCcw className="w-12 h-12 text-slate-100 mx-auto mb-4" />
+                                <p className="text-xs font-black text-slate-300 uppercase tracking-widest">Belum ada data retur yang tercatat</p>
+                              </td>
+                            </tr>
+                          ) : paginatedInspeksiLogs.map(log => (
+                            <motion.tr key={log.id} layout initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="group hover:bg-slate-50/50 transition-colors">
+                              <td className="px-8 py-6">
+                                <div className="flex flex-col">
+                                  <span className="text-[12px] font-black text-slate-900">{log.date}</span>
+                                  <span className="text-[10px] text-slate-400 font-bold tabular-nums">
+                                    {log.createdAt?.toDate?.()?.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }) || '...'}
+                                  </span>
+                                </div>
+                              </td>
+                              <td className="px-8 py-6">
+                                <div className="flex flex-col">
+                                  <span className="text-[14px] font-bold font-mono text-[#3703ff] tracking-wider uppercase leading-none mb-1">#{log.skuId}</span>
+                                  <span className="text-xs font-black text-slate-500 uppercase leading-tight">
+                                    {skus.find(s => s.id === log.skuId)?.name || log.skuName}
+                                  </span>
+                                </div>
+                              </td>
+                              <td className="px-8 py-6">
+                                <span className="text-[11px] font-black bg-rose-50 text-rose-700 px-2.5 py-1 rounded-lg border border-rose-100 uppercase tabular-nums">
+                                  {log.receiptId}
                                 </span>
-                              </div>
-                            </td>
-                            <td className="px-8 py-6">
-                              <div className="flex flex-col">
-                                <span className="text-[14px] font-bold font-mono text-[#3703ff] tracking-wider uppercase leading-none mb-1">#{log.skuId}</span>
-                                <span className="text-xs font-black text-slate-500 uppercase leading-tight">
-                                  {skus.find(s => s.id === log.skuId)?.name || log.skuName}
-                                </span>
-                              </div>
-                            </td>
-                            <td className="px-8 py-6">
-                              <span className="text-[11px] font-black bg-rose-50 text-rose-700 px-2.5 py-1 rounded-lg border border-rose-100 uppercase tabular-nums">
-                                {log.receiptId}
-                              </span>
-                            </td>
-                            <td className="px-8 py-6">
-                              <p className="text-[11px] text-slate-400 font-bold italic line-clamp-2 max-w-[200px]">{log.reason || 'Tanpa keterangan'}</p>
-                            </td>
-                            <td className="px-8 py-6 text-center">
-                               <div className="flex flex-col items-center">
-                                  <span className="text-[15px] font-black text-rose-600">+{log.quantity} <span className="text-[10px] opacity-60">PCS</span></span>
-                               </div>
-                            </td>
-                             <td className="px-8 py-6">
-                               <div className="flex items-center justify-end gap-3">
-                                 {!(log as any).isAutoProcessed ? (
-                                   <button
-                                     onClick={() => {
-                                       setInspectingItem(log);
-                                       setInspectQuantity(log.quantity);
-                                       setInspectionStep('CONDITION');
-                                     }}
-                                     className="flex items-center gap-2 px-4 py-2 bg-slate-900 text-white rounded-lg text-[10px] font-black uppercase tracking-widest hover:bg-black hover:scale-105 active:scale-95 transition-all shadow-sm"
+                              </td>
+                              <td className="px-8 py-6">
+                                <p className="text-[11px] text-slate-400 font-bold italic line-clamp-2 max-w-[200px]">{log.reason || 'Tanpa keterangan'}</p>
+                              </td>
+                              <td className="px-8 py-6 text-center">
+                                 <div className="flex flex-col items-center">
+                                    <span className="text-[15px] font-black text-rose-600">+{log.quantity} <span className="text-[10px] opacity-60">PCS</span></span>
+                                 </div>
+                              </td>
+                               <td className="px-8 py-6">
+                                 <div className="flex items-center justify-end gap-3">
+                                   {!(log as any).isAutoProcessed ? (
+                                     <button
+                                       onClick={() => {
+                                         setInspectingItem(log);
+                                         setInspectQuantity(log.quantity);
+                                         setInspectionStep('CONDITION');
+                                       }}
+                                       className="flex items-center gap-2 px-4 py-2 bg-slate-900 text-white rounded-lg text-[10px] font-black uppercase tracking-widest hover:bg-black hover:scale-105 active:scale-95 transition-all shadow-sm"
+                                     >
+                                       <PackageCheck className="w-3.5 h-3.5" />
+                                       Cek Produk
+                                     </button>
+                                   ) : (
+                                     <div className="flex items-center gap-2 px-3 py-2 bg-rose-50 text-rose-500 rounded-lg text-[9px] font-black uppercase tracking-[0.15em] border border-rose-100 italic">
+                                       <XCircle className="w-3 h-3" />
+                                       Auto Broken
+                                     </div>
+                                   )}
+                                   <button 
+                                    onClick={() => handleDelete(log.id)}
+                                    disabled={isDeleting === log.id}
+                                    className={`p-2.5 transition-all rounded-xl border flex items-center justify-center ${
+                                      confirmDeleteId === log.id 
+                                        ? 'bg-rose-600 text-white border-rose-500 shadow-lg shadow-rose-100 scale-110' 
+                                        : 'text-slate-400 hover:text-rose-600 hover:bg-rose-50 border-transparent hover:border-rose-100'
+                                    }`}
+                                    title={confirmDeleteId === log.id ? "Klik lagi untuk konfirmasi hapus" : "Hapus Log Retur"}
                                    >
-                                     <PackageCheck className="w-3.5 h-3.5" />
-                                     Cek Produk
+                                      <Trash2 className="w-4 h-4" />
                                    </button>
-                                 ) : (
-                                   <div className="flex items-center gap-2 px-3 py-2 bg-rose-50 text-rose-500 rounded-lg text-[9px] font-black uppercase tracking-[0.15em] border border-rose-100 italic">
-                                     <XCircle className="w-3 h-3" />
-                                     Auto Broken
-                                   </div>
-                                 )}
-                                 <button 
-                                  onClick={() => handleDelete(log.id)}
-                                  disabled={isDeleting === log.id}
-                                  className={`p-2.5 transition-all rounded-xl border flex items-center justify-center ${
-                                    confirmDeleteId === log.id 
-                                      ? 'bg-rose-600 text-white border-rose-500 shadow-lg shadow-rose-100 scale-110' 
-                                      : 'text-slate-400 hover:text-rose-600 hover:bg-rose-50 border-transparent hover:border-rose-100'
+                                 </div>
+                              </td>
+                            </motion.tr>
+                          ))}
+                        </AnimatePresence>
+                      </tbody>
+                    </table>
+
+                    {/* Pagination Controls for Inspeksi Log */}
+                    {totalInspeksiPages > 1 && (
+                      <div className="px-8 py-5 border-t border-slate-50 flex flex-col sm:flex-row items-center justify-between gap-4 bg-white">
+                        <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">
+                          Menampilkan <span className="text-slate-900 font-black tabular-nums">{Math.min(logs.length, (activeInspeksiPage - 1) * itemsPerPage + 1)}</span> - <span className="text-slate-900 font-black tabular-nums">{Math.min(logs.length, activeInspeksiPage * itemsPerPage)}</span> dari <span className="text-slate-900 font-black tabular-nums">{logs.length}</span> data
+                        </p>
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => setInspeksiPage(Math.max(1, activeInspeksiPage - 1))}
+                            disabled={activeInspeksiPage === 1}
+                            className="p-2 rounded-xl border border-slate-100 text-slate-500 hover:bg-slate-50 disabled:opacity-40 disabled:hover:bg-transparent transition-all"
+                          >
+                            <ChevronLeft className="w-4 h-4" />
+                          </button>
+                          {Array.from({ length: totalInspeksiPages }, (_, idx) => idx + 1)
+                            .filter(p => p === 1 || p === totalInspeksiPages || Math.abs(p - activeInspeksiPage) <= 1)
+                            .reduce((acc, p, idx, arr) => {
+                              if (idx > 0 && p - arr[idx - 1] > 1) {
+                                acc.push(-1); // represent ellipsis
+                              }
+                              acc.push(p);
+                              return acc;
+                            }, [] as number[])
+                            .map((p, idx) => {
+                              if (p === -1) {
+                                  return (
+                                    <span key={`dots-inspeksi-${idx}`} className="px-3 py-1.5 text-xs font-black text-slate-300">
+                                      ...
+                                    </span>
+                                  );
+                              }
+                              return (
+                                <button
+                                  key={`page-inspeksi-${p}`}
+                                  type="button"
+                                  onClick={() => setInspeksiPage(p)}
+                                  className={`px-3 py-1.5 rounded-xl text-xs font-black transition-all border ${
+                                    activeInspeksiPage === p
+                                      ? 'bg-rose-600 border-rose-600 text-white shadow-md shadow-rose-100'
+                                      : 'bg-white border-slate-100 text-slate-500 hover:bg-slate-50'
                                   }`}
-                                  title={confirmDeleteId === log.id ? "Klik lagi untuk konfirmasi hapus" : "Hapus Log Retur"}
-                                 >
-                                    <Trash2 className="w-4 h-4" />
-                                 </button>
-                               </div>
-                            </td>
-                          </motion.tr>
-                        ))}
-                      </AnimatePresence>
-                    </tbody>
-                  </table>
+                                >
+                                  {p}
+                                </button>
+                              );
+                            })}
+                          <button
+                            type="button"
+                            onClick={() => setInspeksiPage(Math.min(totalInspeksiPages, activeInspeksiPage + 1))}
+                            disabled={activeInspeksiPage === totalInspeksiPages}
+                            className="p-2 rounded-xl border border-slate-100 text-slate-500 hover:bg-slate-50 disabled:opacity-40 disabled:hover:bg-transparent transition-all"
+                          >
+                            <ChevronRight className="w-4 h-4" />
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </>
                 ) : (
                   <div className="p-8">
                     <table className="w-full text-left">
