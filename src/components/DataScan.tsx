@@ -26,6 +26,8 @@ const DataScan: React.FC = () => {
   const [showFilters, setShowFilters] = useState(false);
   const [filters, setFilters] = useState({
     date: '',
+    startDate: '',
+    endDate: '',
     skuId: '',
     receiptId: '',
   });
@@ -39,13 +41,15 @@ const DataScan: React.FC = () => {
   const uniqueItems = Array.from(new Set(logs.map(l => l.skuId))).filter(Boolean).sort();
 
   const filteredLogs = logs.filter(log => {
-    const logDate = log.date || '';
+    const logDate = log.date || (log.createdAt?.toDate ? log.createdAt.toDate().toISOString().split('T')[0] : '');
 
     const matchesDate = !filters.date || logDate === filters.date;
+    const matchesStartDate = !filters.startDate || logDate >= filters.startDate;
+    const matchesEndDate = !filters.endDate || logDate <= filters.endDate;
     const matchesSku = !filters.skuId || log.skuId === filters.skuId;
     const matchesRef = !filters.receiptId || (log.receiptId || "").toLowerCase().includes((filters.receiptId || "").toLowerCase());
 
-    return matchesDate && matchesSku && matchesRef;
+    return matchesDate && matchesStartDate && matchesEndDate && matchesSku && matchesRef;
   });
 
   useEffect(() => {
@@ -214,23 +218,34 @@ const DataScan: React.FC = () => {
     
     // Sheet 1: Data (if includeData is true)
     if (includeData) {
-      const dataToExport = filteredLogs.map(log => ({
-        'Kode SKU': log.skuId,
-        'Nomor Resi': log.receiptId,
-        'Quantity': log.quantity
-      }));
+      const dataToExport = filteredLogs.map(log => {
+        const skuObj = skus.find(s => s.id === log.skuId);
+        let scanDateTime = log.date || '';
+        if (log.createdAt?.toDate) {
+          const d = log.createdAt.toDate();
+          const timeStr = d.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+          scanDateTime = `${log.date || d.toISOString().split('T')[0]} ${timeStr}`;
+        }
+        return {
+          'Tanggal Scan': scanDateTime,
+          'Kode SKU': log.skuId,
+          'Nama SKU': skuObj?.name || log.skuName || '',
+          'Nomor Resi': log.receiptId,
+          'Quantity': log.quantity
+        };
+      });
       
       const worksheetData = dataToExport.length > 0 
         ? utils.json_to_sheet(dataToExport)
-        : utils.json_to_sheet([{ 'Kode SKU': '', 'Nomor Resi': '', 'Quantity': '' }]);
+        : utils.json_to_sheet([{ 'Tanggal Scan': '', 'Kode SKU': '', 'Nama SKU': '', 'Nomor Resi': '', 'Quantity': '' }]);
       
       utils.book_append_sheet(workbook, worksheetData, 'Data Scan');
     }
 
     // Sheet 2: Template Import (Always include)
     const templateData = [
-      { 'Kode SKU': 'SKU-CONTOH-001', 'Nomor Resi': 'RESI123456789', 'Quantity': 1 },
-      { 'Kode SKU': 'SKU-CONTOH-002', 'Nomor Resi': 'RESI987654321', 'Quantity': 2 }
+      { 'Tanggal (YYYY-MM-DD)': new Date().toISOString().split('T')[0], 'Kode SKU': 'SKU-CONTOH-001', 'Nomor Resi': 'RESI123456789', 'Quantity': 1 },
+      { 'Tanggal (YYYY-MM-DD)': new Date().toISOString().split('T')[0], 'Kode SKU': 'SKU-CONTOH-002', 'Nomor Resi': 'RESI987654321', 'Quantity': 2 }
     ];
     const worksheetTemplate = utils.json_to_sheet(templateData);
     utils.book_append_sheet(workbook, worksheetTemplate, 'Template Import');
@@ -273,7 +288,8 @@ const DataScan: React.FC = () => {
           const skuCode = String(row['Kode SKU'] || row['SKU'] || '').trim().toUpperCase();
           const receiptId = String(row['Nomor Resi'] || row['barcode/no resi'] || '').trim();
           const qty = Number(row['Quantity'] || row['qty'] || row['Quantity'] || 1);
-          const date = String(row['Tanggal (YYYY-MM-DD)'] || new Date().toISOString().split('T')[0]).trim();
+          const rawDate = row['Tanggal Scan'] || row['Tanggal (YYYY-MM-DD)'] || row['Tanggal'] || '';
+          const date = String(rawDate ? String(rawDate).split(' ')[0] : new Date().toISOString().split('T')[0]).trim();
 
           if (!skuCode || !receiptId) {
             failCount++;
@@ -485,7 +501,7 @@ const DataScan: React.FC = () => {
 
                  {Object.values(filters).some(v => v !== '') && (
                     <button 
-                      onClick={() => setFilters({ date: '', skuId: '', receiptId: '' })}
+                      onClick={() => setFilters({ date: '', startDate: '', endDate: '', skuId: '', receiptId: '' })}
                       className="text-[10px] font-black text-rose-500 uppercase tracking-widest hover:underline"
                     >
                       Reset
@@ -520,7 +536,7 @@ const DataScan: React.FC = () => {
                     <p className="text-sm font-black text-slate-400 uppercase tracking-widest leading-loose">Data Tidak Ditemukan</p>
                     {Object.values(filters).some(v => v !== '') && (
                         <button 
-                          onClick={() => setFilters({ date: '', skuId: '', receiptId: '' })}
+                          onClick={() => setFilters({ date: '', startDate: '', endDate: '', skuId: '', receiptId: '' })}
                           className="mt-4 text-indigo-600 font-bold hover:underline text-[10px] uppercase tracking-widest"
                         >
                           Reset Semua Filter
@@ -730,12 +746,36 @@ const DataScan: React.FC = () => {
                   <div className="grid grid-cols-1 gap-4">
                      {/* Calendar Date Picker */}
                      <div className="space-y-1.5">
-                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">Pilih Tanggal</label>
+                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">Rentang Tanggal</label>
+                        <div className="grid grid-cols-2 gap-2 mt-1">
+                           <div>
+                              <span className="text-[9px] font-bold text-slate-400 block mb-1">Dari Tanggal</span>
+                              <input 
+                                 type="date"
+                                 value={filters.startDate}
+                                 onChange={(e) => setFilters(prev => ({ ...prev, startDate: e.target.value }))}
+                                 className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-bold focus:border-indigo-400 outline-none cursor-pointer"
+                              />
+                           </div>
+                           <div>
+                              <span className="text-[9px] font-bold text-slate-400 block mb-1">Sampai Tanggal</span>
+                              <input 
+                                 type="date"
+                                 value={filters.endDate}
+                                 onChange={(e) => setFilters(prev => ({ ...prev, endDate: e.target.value }))}
+                                 className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-bold focus:border-indigo-400 outline-none cursor-pointer"
+                              />
+                           </div>
+                        </div>
+                     </div>
+
+                     <div className="space-y-1.5">
+                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">Atau Tanggal Spesifik</label>
                         <input 
                            type="date"
                            value={filters.date}
                            onChange={(e) => setFilters(prev => ({ ...prev, date: e.target.value }))}
-                           className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm font-bold focus:border-indigo-400 outline-none cursor-pointer"
+                           className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2 text-xs font-bold focus:border-indigo-400 outline-none cursor-pointer"
                         />
                      </div>
 
