@@ -5,7 +5,7 @@ import { handleFirestoreError, OperationType } from '../lib/errorHandlers';
 import { useWarehouse } from '../contexts/WarehouseContext';
 import { processTransaction, deleteTransaction } from '../services/rekapService';
 import { SKU } from '../types';
-import { Trash2, Scan, AlertCircle, Filter, X, FileDown, Upload, FileQuestion, Loader2 } from 'lucide-react';
+import { Trash2, Scan, AlertCircle, Filter, X, FileDown, Upload, FileQuestion, Loader2, ChevronLeft, ChevronRight } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { utils, read, writeFile } from 'xlsx';
 
@@ -30,6 +30,9 @@ const DataScan: React.FC = () => {
     receiptId: '',
   });
 
+  const [currentPage, setCurrentPage] = useState(1);
+  const itemsPerPage = 100;
+
   const selectedSkuData = skus.find(s => s.internalId === selectedSku);
 
   // Unique values for filters
@@ -44,6 +47,14 @@ const DataScan: React.FC = () => {
 
     return matchesDate && matchesSku && matchesRef;
   });
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [activeWarehouse, filters]);
+
+  const totalPages = Math.ceil(filteredLogs.length / itemsPerPage) || 1;
+  const activePage = Math.min(currentPage, totalPages) || 1;
+  const paginatedLogs = filteredLogs.slice((activePage - 1) * itemsPerPage, activePage * itemsPerPage);
 
   const receiptCounts = filteredLogs.reduce((acc, log) => {
     acc[log.receiptId] = (acc[log.receiptId] || 0) + 1;
@@ -84,8 +95,7 @@ const DataScan: React.FC = () => {
     const q = query(
       collection(db, 'history/keluar/records'),
       where('warehouseId', '==', activeWarehouse.id),
-      orderBy('createdAt', 'desc'),
-      limit(200)
+      orderBy('createdAt', 'desc')
     );
     const unsubLogs = onSnapshot(q, (snap) => {
       setLogs(snap.docs.map(doc => ({ id: doc.id, ...doc.data() } as any)).filter(log => log.type === 'SCAN KELUAR'));
@@ -517,7 +527,7 @@ const DataScan: React.FC = () => {
                         </button>
                      )}
                   </motion.div>
-                ) : filteredLogs.map((log) => {
+                ) : paginatedLogs.map((log) => {
                   const isGrouped = receiptCounts[log.receiptId] > 1;
                   const groupColor = getGroupColor(log.receiptId);
                   
@@ -590,6 +600,65 @@ const DataScan: React.FC = () => {
                 })}
               </AnimatePresence>
             </div>
+
+            {/* Pagination Controls */}
+            {totalPages > 1 && (
+              <div className="p-5 bg-white rounded-[2rem] border-2 border-slate-100 flex flex-col sm:flex-row items-center justify-between gap-4 shadow-sm">
+                <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">
+                  Menampilkan <span className="text-slate-900 font-black tabular-nums">{Math.min(filteredLogs.length, (activePage - 1) * itemsPerPage + 1)}</span> - <span className="text-slate-900 font-black tabular-nums">{Math.min(filteredLogs.length, activePage * itemsPerPage)}</span> dari <span className="text-slate-900 font-black tabular-nums">{filteredLogs.length}</span> data
+                </p>
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <button
+                    type="button"
+                    onClick={() => setCurrentPage(Math.max(1, activePage - 1))}
+                    disabled={activePage === 1}
+                    className="p-2 rounded-xl border border-slate-100 text-slate-500 hover:bg-slate-50 disabled:opacity-40 disabled:hover:bg-transparent transition-all"
+                  >
+                    <ChevronLeft className="w-4 h-4" />
+                  </button>
+                  {Array.from({ length: totalPages }, (_, idx) => idx + 1)
+                    .filter(p => p === 1 || p === totalPages || Math.abs(p - activePage) <= 1)
+                    .reduce((acc, p, idx, arr) => {
+                      if (idx > 0 && p - arr[idx - 1] > 1) {
+                        acc.push(-1);
+                      }
+                      acc.push(p);
+                      return acc;
+                    }, [] as number[])
+                    .map((p, idx) => {
+                      if (p === -1) {
+                        return (
+                          <span key={`dots-${idx}`} className="px-2.5 py-1 text-xs font-black text-slate-300">
+                            ...
+                          </span>
+                        );
+                      }
+                      return (
+                        <button
+                          key={`page-${p}`}
+                          type="button"
+                          onClick={() => setCurrentPage(p)}
+                          className={`px-3 py-1.5 rounded-xl text-xs font-black transition-all border ${
+                            activePage === p
+                              ? 'bg-indigo-600 border-indigo-600 text-white shadow-md shadow-indigo-100'
+                              : 'bg-white border-slate-100 text-slate-500 hover:bg-slate-50'
+                          }`}
+                        >
+                          {p}
+                        </button>
+                      );
+                    })}
+                  <button
+                    type="button"
+                    onClick={() => setCurrentPage(Math.min(totalPages, activePage + 1))}
+                    disabled={activePage === totalPages}
+                    className="p-2 rounded-xl border border-slate-100 text-slate-500 hover:bg-slate-50 disabled:opacity-40 disabled:hover:bg-transparent transition-all"
+                  >
+                    <ChevronRight className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+            )}
          </div>
 
          <div className="space-y-6">
