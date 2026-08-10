@@ -121,7 +121,7 @@ const UserManagement: React.FC = () => {
           <input
             type="text"
             placeholder="Cari nama atau email..."
-            value={searchTerm}
+            value={searchTerm || ''}
             onChange={(e) => setSearchTerm(e.target.value)}
             className="w-full bg-white border-2 border-slate-100 rounded-2xl pl-12 pr-6 py-3.5 font-bold text-slate-900 focus:ring-4 focus:ring-indigo-100 focus:border-indigo-400 outline-none transition-all shadow-sm"
           />

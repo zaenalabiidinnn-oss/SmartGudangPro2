@@ -6,6 +6,7 @@ import { useWarehouse } from '../contexts/WarehouseContext';
 import { Calendar, Search, Filter, Loader2, Package, Inbox, AlertCircle, ArrowUpRight, ArrowDownLeft, Download, FileSpreadsheet } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { motion, AnimatePresence } from 'motion/react';
+import { sortSkusByModelAndVariant, getSkuModelName } from '../utils/skuSorter';
 
 interface StokHarianProps {
   role?: string | null;
@@ -191,10 +192,12 @@ const StokHarian: React.FC<StokHarianProps> = ({ role }) => {
     }
   };
 
-  const filteredSkus = Object.values(historicalData).filter((item: HistoricalItem) => {
-    const s = (search || "").toLowerCase();
-    return (item.logicalSkuId || "").toLowerCase().includes(s) || (item.name || "").toLowerCase().includes(s);
-  });
+  const filteredSkus = sortSkusByModelAndVariant(
+    Object.values(historicalData).filter((item: HistoricalItem) => {
+      const s = (search || "").toLowerCase();
+      return (item.logicalSkuId || "").toLowerCase().includes(s) || (item.name || "").toLowerCase().includes(s);
+    })
+  );
 
   const handleExportCSV = () => {
     const headers = ['Nama Barang', 'SKU ID', 'Isi', 'Masuk', 'Keluar', 'Retur', 'Stok Akhir', 'Total Stok (Dus)', 'Sisa (Pcs)'];
@@ -367,7 +370,7 @@ const StokHarian: React.FC<StokHarianProps> = ({ role }) => {
             </div>
             <input 
               type="date"
-              value={targetDate}
+              value={targetDate || ''}
               max={new Date().toISOString().split('T')[0]}
               onChange={(e) => setTargetDate(e.target.value)}
               className="flex-1 bg-transparent border-none outline-none font-black text-lg text-slate-700 tabular-nums focus:ring-0"
@@ -383,7 +386,7 @@ const StokHarian: React.FC<StokHarianProps> = ({ role }) => {
             <input
               type="text"
               placeholder="Cari SKU atau nama barang..."
-              value={search}
+              value={search || ''}
               onChange={(e) => setSearch(e.target.value)}
               className="w-full pl-10 pr-4 py-3 bg-white border border-slate-200 rounded-2xl focus:ring-4 focus:ring-indigo-100 focus:border-indigo-400 outline-none transition-all font-medium text-slate-700 placeholder:text-slate-400 shadow-sm"
             />
@@ -424,13 +427,28 @@ const StokHarian: React.FC<StokHarianProps> = ({ role }) => {
                    </td>
                 </tr>
               ) : (
-                filteredSkus.map((item: HistoricalItem) => {
+                filteredSkus.map((item: HistoricalItem, index: number) => {
                   const pcsPerCarton = item.pcsPerCarton || 1;
                   const boxes = pcsPerCarton > 1 ? Math.floor(item.currentStock / pcsPerCarton) : 0;
                   const remPcs = pcsPerCarton > 1 ? item.currentStock % pcsPerCarton : item.currentStock;
 
+                  const currentModel = getSkuModelName(item.logicalSkuId, item.name);
+                  const prevItem = index > 0 ? (filteredSkus[index - 1] as HistoricalItem) : null;
+                  const prevModel = prevItem ? getSkuModelName(prevItem.logicalSkuId, prevItem.name) : null;
+                  const showGroupHeader = currentModel !== prevModel;
+
                   return (
-                    <tr key={item.id} className="group hover:bg-slate-50/50 transition-colors">
+                    <React.Fragment key={item.id}>
+                      {showGroupHeader && (
+                        <tr className="bg-slate-100/80 border-y border-slate-200/80">
+                          <td colSpan={5} className="px-8 py-2.5">
+                            <span className="bg-indigo-600 text-white px-3 py-1 rounded-lg text-[10px] font-black uppercase tracking-widest shadow-sm">
+                              SERI / MODEL: {currentModel}
+                            </span>
+                          </td>
+                        </tr>
+                      )}
+                      <tr className="group hover:bg-slate-50/50 transition-colors">
                       <td className="px-8 py-6">
                         <div className="flex flex-col">
                           <span className="text-[14px] font-bold text-[#3703ff] tracking-wider uppercase leading-[18px] self-start" style={{ fontFamily: 'Verdana, sans-serif' }}>{item.logicalSkuId}</span>
@@ -520,7 +538,7 @@ const StokHarian: React.FC<StokHarianProps> = ({ role }) => {
                                     {allPossibleSizes.length > 1 && (
                                        <div className="w-full flex flex-col gap-1">
                                           <select
-                                             value={selectedSize}
+                                             value={selectedSize || ''}
                                              onChange={(e) => setDisplayCartonSize(prev => ({ ...prev, [item.skuId]: Number(e.target.value) }))}
                                              className="w-full text-[9px] font-black bg-white border border-slate-200 rounded-xl px-2 py-1.5 text-slate-500 outline-none focus:border-indigo-400 cursor-pointer hover:bg-slate-50 transition-all text-center uppercase"
                                           >
@@ -558,7 +576,8 @@ const StokHarian: React.FC<StokHarianProps> = ({ role }) => {
                         )}
                       </td>
                     </tr>
-                  );
+                  </React.Fragment>
+                );
                 })
               )}
             </tbody>

@@ -5,6 +5,7 @@ import { handleFirestoreError, OperationType } from '../lib/errorHandlers';
 import { useWarehouse } from '../contexts/WarehouseContext';
 import { processTransaction, deleteTransaction } from '../services/rekapService';
 import { SKU } from '../types';
+import { sortSkusByModelAndVariant } from '../utils/skuSorter';
 import { Trash2, Scan, AlertCircle, Filter, X, FileDown, Upload, FileQuestion, Loader2, ChevronLeft, ChevronRight } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { utils, read, writeFile } from 'xlsx';
@@ -87,10 +88,11 @@ const DataScan: React.FC = () => {
     if (!activeWarehouse) return;
 
     const unsubSkus = onSnapshot(query(collection(db, 'skus'), where('warehouseId', '==', activeWarehouse.id)), (snap) => {
-      setSkus(snap.docs.map(doc => {
+      const mappedSkus = snap.docs.map(doc => {
         const data = doc.data();
         return { ...data, internalId: doc.id, id: data.id || doc.id.split('_').slice(1).join('_') } as SKU;
-      }));
+      });
+      setSkus(sortSkusByModelAndVariant(mappedSkus));
     }, (error) => {
       console.error("Error fetching skus in DataScan:", error);
       handleFirestoreError(error, OperationType.LIST, 'skus');
@@ -381,7 +383,7 @@ const DataScan: React.FC = () => {
           <div className="md:col-span-4 space-y-1.5">
             <label className="text-[9px] font-black uppercase tracking-widest text-slate-400 ml-2">Pilih SKU</label>
             <select
-              value={selectedSku}
+              value={selectedSku || ''}
               onChange={(e) => setSelectedSku(e.target.value)}
               className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl outline-none transition-all font-bold text-slate-700 text-sm appearance-none cursor-pointer"
             >
@@ -410,7 +412,7 @@ const DataScan: React.FC = () => {
             <input
               ref={inputRef}
               type="text"
-              value={receiptId}
+              value={receiptId || ''}
               onChange={(e) => setReceiptId(e.target.value)}
               placeholder="SCAN DISINI..."
               className="w-full px-5 py-3 bg-slate-50 border border-slate-200 rounded-2xl outline-none font-black text-lg text-indigo-600 placeholder:text-slate-300"

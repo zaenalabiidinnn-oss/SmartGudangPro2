@@ -5,6 +5,7 @@ import { handleFirestoreError, OperationType } from '../lib/errorHandlers';
 import { useWarehouse } from '../contexts/WarehouseContext';
 import { processTransaction, deleteTransaction } from '../services/rekapService';
 import { SKU } from '../types';
+import { sortSkusByModelAndVariant } from '../utils/skuSorter';
 import { Trash2, Download, AlertCircle, Filter, X, ChevronDown, Search } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
@@ -98,10 +99,11 @@ const DataMasuk: React.FC = () => {
   useEffect(() => {
     if (!activeWarehouse) return;
     const unsubSkus = onSnapshot(query(collection(db, 'skus'), where('warehouseId', '==', activeWarehouse.id)), (snap) => {
-      setSkus(snap.docs.map(doc => {
+      const mappedSkus = snap.docs.map(doc => {
         const data = doc.data();
         return { ...data, internalId: doc.id, id: data.id || doc.id.split('_').slice(1).join('_') } as SKU;
-      }));
+      });
+      setSkus(sortSkusByModelAndVariant(mappedSkus));
     }, (error) => handleFirestoreError(error, OperationType.LIST, 'skus'));
 
     const q = query(
@@ -171,16 +173,16 @@ const DataMasuk: React.FC = () => {
             <div className="space-y-4">
               <div className="space-y-2">
                 <label className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400 ml-1">Tanggal</label>
-                <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="w-full px-4 py-3 border border-slate-200 rounded-xl font-bold text-sm" />
+                <input type="date" value={date || ''} onChange={(e) => setDate(e.target.value)} className="w-full px-4 py-3 border border-slate-200 rounded-xl font-bold text-sm" />
               </div>
               <div className="space-y-2">
                 <label className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400 ml-1">Referensi</label>
-                <input type="text" value={documentNo} onChange={(e) => setDocumentNo(e.target.value)} placeholder="ID NOTA / SJ" className="w-full px-4 py-3 border border-slate-200 rounded-xl font-bold text-sm uppercase" />
+                <input type="text" value={documentNo || ''} onChange={(e) => setDocumentNo(e.target.value)} placeholder="ID NOTA / SJ" className="w-full px-4 py-3 border border-slate-200 rounded-xl font-bold text-sm uppercase" />
               </div>
               <div className="space-y-2">
                 <label className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400 ml-1">Nama Barang / SKU</label>
                 <select 
-                  value={selectedSku} 
+                  value={selectedSku || ''} 
                   onChange={(e) => {
                     const intId = e.target.value;
                     setSelectedSku(intId);
@@ -457,8 +459,8 @@ const DataMasuk: React.FC = () => {
             <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }} className="relative w-full max-w-lg bg-white rounded-[2.5rem] p-8 shadow-2xl">
                <h3 className="text-xl font-black text-slate-900 mb-6">Filter Data Masuk</h3>
                <div className="space-y-4">
-                 <input type="date" value={filters.date} onChange={(e) => setFilters(prev => ({ ...prev, date: e.target.value }))} className="w-full bg-slate-50 border border-slate-200 rounded-2xl px-6 py-4" />
-                 <input type="text" value={filters.receiptId} onChange={(e) => setFilters(prev => ({ ...prev, receiptId: e.target.value }))} placeholder="Cari nomor dokumen..." className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5" />
+                 <input type="date" value={filters.date || ''} onChange={(e) => setFilters(prev => ({ ...prev, date: e.target.value }))} className="w-full bg-slate-50 border border-slate-200 rounded-2xl px-6 py-4" />
+                 <input type="text" value={filters.receiptId || ''} onChange={(e) => setFilters(prev => ({ ...prev, receiptId: e.target.value }))} placeholder="Cari nomor dokumen..." className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5" />
                </div>
                <button onClick={() => setShowFilters(false)} className="w-full mt-8 bg-indigo-600 text-white font-black py-4 rounded-2xl shadow-xl">Terapkan Filter</button>
             </motion.div>

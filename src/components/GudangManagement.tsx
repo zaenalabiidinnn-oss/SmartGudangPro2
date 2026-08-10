@@ -208,7 +208,7 @@ const GudangManagement: React.FC<GudangManagementProps> = ({ role }) => {
                 <input
                   autoFocus
                   type="text"
-                  value={editName}
+                  value={editName || ''}
                   onChange={(e) => setEditName(e.target.value)}
                   placeholder="Contoh: Gudang Utama"
                   className="w-full bg-slate-50 border-2 border-slate-100 rounded-2xl px-6 py-4 font-bold focus:ring-4 focus:ring-indigo-100 focus:border-indigo-400 outline-none transition-all placeholder:text-slate-300"
@@ -222,7 +222,7 @@ const GudangManagement: React.FC<GudangManagementProps> = ({ role }) => {
                   <MapPin className="absolute left-6 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-300" />
                   <input
                     type="text"
-                    value={editLocation}
+                    value={editLocation || ''}
                     onChange={(e) => setEditLocation(e.target.value)}
                     placeholder="Contoh: Jakarta Barat"
                     className="w-full bg-slate-50 border-2 border-slate-100 rounded-2xl pl-16 pr-6 py-4 font-bold focus:ring-4 focus:ring-indigo-100 focus:border-indigo-400 outline-none transition-all placeholder:text-slate-300"
@@ -269,7 +269,7 @@ const GudangManagement: React.FC<GudangManagementProps> = ({ role }) => {
                 <input
                   autoFocus
                   type="text"
-                  value={newName}
+                  value={newName || ''}
                   onChange={(e) => setNewName(e.target.value)}
                   placeholder="Contoh: Gudang Utama"
                   className="w-full bg-slate-50 border-2 border-slate-100 rounded-2xl px-6 py-4 font-bold focus:ring-4 focus:ring-indigo-100 focus:border-indigo-400 outline-none transition-all placeholder:text-slate-300"
@@ -283,7 +283,7 @@ const GudangManagement: React.FC<GudangManagementProps> = ({ role }) => {
                   <MapPin className="absolute left-6 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-300" />
                   <input
                     type="text"
-                    value={newLocation}
+                    value={newLocation || ''}
                     onChange={(e) => setNewLocation(e.target.value)}
                     placeholder="Contoh: Jakarta Barat"
                     className="w-full bg-slate-50 border-2 border-slate-100 rounded-2xl pl-16 pr-6 py-4 font-bold focus:ring-4 focus:ring-indigo-100 focus:border-indigo-400 outline-none transition-all placeholder:text-slate-300"

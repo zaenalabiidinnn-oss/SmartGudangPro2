@@ -664,7 +664,7 @@ const HistoryLogs: React.FC<HistoryLogsProps> = ({ role }) => {
                    <div className="space-y-1.5">
                       <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">Tahun</label>
                       <select 
-                         value={filters.year}
+                         value={filters.year || ''}
                          onChange={(e) => setFilters(prev => ({ ...prev, year: e.target.value }))}
                          className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-xs font-bold focus:border-indigo-400 outline-none"
                       >
@@ -675,7 +675,7 @@ const HistoryLogs: React.FC<HistoryLogsProps> = ({ role }) => {
                    <div className="space-y-1.5">
                       <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">Bulan</label>
                       <select 
-                         value={filters.month}
+                         value={filters.month || ''}
                          onChange={(e) => setFilters(prev => ({ ...prev, month: e.target.value }))}
                          className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-xs font-bold focus:border-indigo-400 outline-none"
                       >
@@ -688,7 +688,7 @@ const HistoryLogs: React.FC<HistoryLogsProps> = ({ role }) => {
                    <div className="space-y-1.5">
                       <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">Tanggal</label>
                       <select 
-                         value={filters.day}
+                         value={filters.day || ''}
                          onChange={(e) => setFilters(prev => ({ ...prev, day: e.target.value }))}
                          className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-xs font-bold focus:border-indigo-400 outline-none"
                       >
@@ -701,7 +701,7 @@ const HistoryLogs: React.FC<HistoryLogsProps> = ({ role }) => {
                  <div className="space-y-1.5">
                     <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">Inventory Item</label>
                     <select 
-                       value={filters.inventoryItem}
+                       value={filters.inventoryItem || ''}
                        onChange={(e) => setFilters(prev => ({ ...prev, inventoryItem: e.target.value }))}
                        className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-xs font-bold focus:border-indigo-400 outline-none"
                     >
@@ -718,7 +718,7 @@ const HistoryLogs: React.FC<HistoryLogsProps> = ({ role }) => {
                     <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">Reference / Resi</label>
                     <input 
                        type="text"
-                       value={filters.reference}
+                       value={filters.reference || ''}
                        onChange={(e) => setFilters(prev => ({ ...prev, reference: e.target.value }))}
                        placeholder="Cari No Ref..."
                        className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-xs font-bold focus:border-indigo-400 outline-none transition-all"
@@ -728,7 +728,7 @@ const HistoryLogs: React.FC<HistoryLogsProps> = ({ role }) => {
                  <div className="space-y-1.5">
                     <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">Reason / Alasan</label>
                     <select 
-                       value={filters.reason}
+                       value={filters.reason || ''}
                        onChange={(e) => setFilters(prev => ({ ...prev, reason: e.target.value }))}
                        className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-xs font-bold focus:border-indigo-400 outline-none"
                     >
@@ -740,7 +740,7 @@ const HistoryLogs: React.FC<HistoryLogsProps> = ({ role }) => {
                  <div className="space-y-1.5">
                     <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">Transaction Type</label>
                     <select 
-                       value={filters.type}
+                       value={filters.type || ''}
                        onChange={(e) => setFilters(prev => ({ ...prev, type: e.target.value }))}
                        className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-xs font-bold focus:border-indigo-400 outline-none"
                     >
@@ -783,7 +783,7 @@ const HistoryLogs: React.FC<HistoryLogsProps> = ({ role }) => {
           <div className="flex items-center gap-2">
             <input 
               type="date"
-              value={filterDate}
+              value={filterDate || ''}
               onChange={(e) => setFilterDate(e.target.value)}
               className="bg-transparent border-none outline-none font-black text-xs text-slate-700 uppercase tracking-widest focus:ring-0"
             />
@@ -807,7 +807,7 @@ const HistoryLogs: React.FC<HistoryLogsProps> = ({ role }) => {
             <input
               type="text"
               placeholder="Cari transaksi, SKU, atau no resi..."
-              value={search}
+              value={search || ''}
               onChange={(e) => setSearch(e.target.value)}
               className="w-full pl-10 pr-4 py-3 bg-white border border-slate-200 rounded-2xl focus:ring-4 focus:ring-indigo-100 focus:border-indigo-400 outline-none transition-all font-medium text-slate-700 placeholder:text-slate-400 shadow-sm"
             />

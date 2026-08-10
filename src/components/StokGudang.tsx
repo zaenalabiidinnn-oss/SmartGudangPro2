@@ -5,6 +5,7 @@ import { handleFirestoreError, OperationType } from '../lib/errorHandlers';
 import { useWarehouse } from '../contexts/WarehouseContext';
 import { processTransaction } from '../services/rekapService';
 import { SKU } from '../types';
+import { compareSkusByModelAndVariant, getSkuModelName } from '../utils/skuSorter';
 import { Package, Plus, Trash2, Search, Edit2, Save, X, AlertTriangle, Bell, Loader2, Send, FileDown, Filter, ArrowUpDown } from 'lucide-react';
 import { utils, writeFile, read } from 'xlsx';
 import { motion, AnimatePresence } from 'motion/react';
@@ -122,7 +123,7 @@ const StokGudang: React.FC<StokGudangProps> = ({ role }) => {
     currentStock: '',
     threshold: ''
   });
-  const [sortBy, setSortBy] = useState<string>('sku_asc');
+  const [sortBy, setSortBy] = useState<string>('model_asc');
   const [exportFields, setExportFields] = useState({
     id: true,
     name: true,
@@ -481,6 +482,8 @@ const StokGudang: React.FC<StokGudangProps> = ({ role }) => {
     return matchesSearch && matchesId && matchesName && matchesStock && matchesThreshold;
   }).sort((a, b) => {
     switch (sortBy) {
+      case 'model_asc':
+        return compareSkusByModelAndVariant(a, b);
       case 'sku_asc':
         return a.id.localeCompare(b.id);
       case 'sku_desc':
@@ -508,7 +511,7 @@ const StokGudang: React.FC<StokGudangProps> = ({ role }) => {
       case 'stock_high':
         return (b.currentStock || 0) - (a.currentStock || 0);
       default:
-        return (a.currentStock || 0) - (b.currentStock || 0);
+        return compareSkusByModelAndVariant(a, b);
     }
   });
 
@@ -699,7 +702,7 @@ const StokGudang: React.FC<StokGudangProps> = ({ role }) => {
                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">{field.label}</label>
                        <input 
                           type="text"
-                          value={filters[field.key as keyof typeof filters]}
+                          value={filters[field.key as keyof typeof filters] || ''}
                           onChange={(e) => setFilters(prev => ({ ...prev, [field.key]: e.target.value }))}
                           placeholder={field.placeholder}
                           className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-xs font-bold focus:ring-4 focus:ring-indigo-100 focus:border-indigo-400 outline-none transition-all"
@@ -777,6 +780,7 @@ const StokGudang: React.FC<StokGudangProps> = ({ role }) => {
                 onChange={(e) => setSortBy(e.target.value)}
                 className="px-4 py-3 bg-white border border-slate-200 rounded-xl focus:ring-4 focus:ring-indigo-100 focus:border-indigo-400 outline-none transition-all font-bold text-sm text-slate-700 shadow-sm appearance-none cursor-pointer min-w-[140px] text-center pr-4"
               >
+                <option value="model_asc">Urut Seri/Model (M7 → R08 ...)</option>
                 <option value="sku_asc">A - Z (Kode SKU)</option>
                 <option value="sku_desc">Z - A (Kode SKU)</option>
                 <option value="newest">Terbaru</option>
@@ -895,7 +899,7 @@ const StokGudang: React.FC<StokGudangProps> = ({ role }) => {
                 <label className="text-[10px] font-black text-indigo-600 uppercase tracking-widest pl-1">Kode SKU</label>
                 <input
                   placeholder="e.g. SKU-123"
-                  value={newSKU.id}
+                  value={newSKU.id || ''}
                   onChange={(e) => setNewSKU({ ...newSKU, id: e.target.value.toUpperCase() })}
                   className="w-full px-4 py-3 bg-white border border-slate-200 rounded-xl focus:ring-4 focus:ring-indigo-100 focus:border-indigo-400 outline-none transition-all font-mono font-bold uppercase"
                 />
@@ -904,7 +908,7 @@ const StokGudang: React.FC<StokGudangProps> = ({ role }) => {
                 <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">Nama Barang</label>
                 <input
                   placeholder="Masukkan nama barang lengkap..."
-                  value={newSKU.name}
+                  value={newSKU.name || ''}
                   onChange={(e) => setNewSKU({ ...newSKU, name: e.target.value })}
                   className="w-full px-4 py-3 bg-white border border-slate-200 rounded-xl focus:ring-4 focus:ring-indigo-100 focus:border-indigo-400 outline-none transition-all font-bold"
                 />
@@ -914,7 +918,7 @@ const StokGudang: React.FC<StokGudangProps> = ({ role }) => {
                   <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">Jumlah Dus</label>
                   <input
                     type="number"
-                    value={newSKU.initialBoxes}
+                    value={newSKU.initialBoxes ?? ''}
                     onChange={(e) => setNewSKU({ ...newSKU, initialBoxes: Number(e.target.value) })}
                     className="w-full px-4 py-3 bg-white border border-slate-200 rounded-xl focus:ring-4 focus:ring-indigo-100 focus:border-indigo-400 outline-none transition-all font-bold tabular-nums"
                   />
@@ -923,20 +927,20 @@ const StokGudang: React.FC<StokGudangProps> = ({ role }) => {
                   <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">Isi (Pcs/Dus)</label>
                   <input
                     type="number"
-                    value={newSKU.pcsPerCarton}
+                    value={newSKU.pcsPerCarton ?? ''}
                     onChange={(e) => setNewSKU({ ...newSKU, pcsPerCarton: Number(e.target.value) })}
                     className="w-full px-4 py-3 bg-white border border-slate-200 rounded-xl focus:ring-4 focus:ring-indigo-100 focus:border-indigo-400 outline-none transition-all font-bold tabular-nums"
                   />
                 </div>
                 <div className="bg-indigo-50 p-3 rounded-xl border border-indigo-100 flex-1 min-w-[120px] flex flex-col justify-center">
                   <span className="text-[9px] font-black text-indigo-400 uppercase tracking-tight">Total Stok Awal</span>
-                  <p className="text-sm font-black text-indigo-700 tabular-nums">{(newSKU.initialBoxes * (newSKU.pcsPerCarton || 0)).toLocaleString()} PCS</p>
+                  <p className="text-sm font-black text-indigo-700 tabular-nums">{((newSKU.initialBoxes || 0) * (newSKU.pcsPerCarton || 0)).toLocaleString()} PCS</p>
                 </div>
                 <div className="space-y-1.5 flex-1 min-w-[100px]">
                   <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">Threshold</label>
                   <input
                     type="number"
-                    value={newSKU.threshold}
+                    value={newSKU.threshold ?? ''}
                     onChange={(e) => setNewSKU({ ...newSKU, threshold: Number(e.target.value) })}
                     className="w-full px-4 py-3 bg-white border border-slate-200 rounded-xl focus:ring-4 focus:ring-indigo-100 focus:border-indigo-400 outline-none transition-all font-bold tabular-nums"
                   />
@@ -973,16 +977,31 @@ const StokGudang: React.FC<StokGudangProps> = ({ role }) => {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-50">
-              {filteredSkus.map(sku => {
+              {filteredSkus.map((sku, index) => {
                 const isLowStock = sku.currentStock <= (sku.threshold ?? 10);
                 const isSelected = selectedIds.includes(sku.internalId!);
                 const isEditing = editingSKUId === sku.internalId;
 
+                const currentModel = getSkuModelName(sku.id, sku.name);
+                const prevModel = index > 0 ? getSkuModelName(filteredSkus[index - 1].id, filteredSkus[index - 1].name) : null;
+                const showGroupHeader = sortBy === 'model_asc' && currentModel !== prevModel;
+
                 return (
-                  <tr 
-                    key={sku.internalId} 
-                    className={`group transition-all duration-200 ${isSelected ? 'bg-indigo-50/30' : 'hover:bg-slate-50/50'}`}
-                  >
+                  <React.Fragment key={sku.internalId}>
+                    {showGroupHeader && (
+                      <tr className="bg-slate-100/80 border-y border-slate-200/80">
+                        <td colSpan={isAdmin ? 7 : 6} className="px-6 py-2.5">
+                          <div className="flex items-center gap-2">
+                            <span className="bg-indigo-600 text-white px-3 py-1 rounded-lg text-[10px] font-black uppercase tracking-widest shadow-sm">
+                              SERI / MODEL: {currentModel}
+                            </span>
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                    <tr 
+                      className={`group transition-all duration-200 ${isSelected ? 'bg-indigo-50/30' : 'hover:bg-slate-50/50'}`}
+                    >
                     <td className="px-8 py-5">
                       <input 
                         type="checkbox"
@@ -994,7 +1013,7 @@ const StokGudang: React.FC<StokGudangProps> = ({ role }) => {
                     <td className="px-4 py-5">
                       {isEditing ? (
                         <input
-                          value={editID}
+                          value={editID || ''}
                           onChange={(e) => setEditID(e.target.value.toUpperCase())}
                           className="bg-white border-2 border-indigo-100 rounded-lg px-2 py-1 text-sm font-black text-slate-900 w-full outline-none focus:border-indigo-400 uppercase tracking-widest"
                         />
@@ -1014,7 +1033,7 @@ const StokGudang: React.FC<StokGudangProps> = ({ role }) => {
                     <td className="px-4 py-5">
                       {isEditing ? (
                           <input
-                            value={editName}
+                            value={editName || ''}
                             onChange={(e) => setEditName(e.target.value)}
                             className="bg-white border-2 border-indigo-100 rounded-lg px-2 py-1 text-sm font-bold w-full outline-none focus:border-indigo-400"
                           />
@@ -1125,7 +1144,7 @@ const StokGudang: React.FC<StokGudangProps> = ({ role }) => {
                       {isEditing ? (
                         <input
                           type="number"
-                          value={editThreshold}
+                          value={editThreshold ?? ''}
                           onChange={(e) => setEditThreshold(Number(e.target.value))}
                           className="w-20 bg-white border-2 border-indigo-100 rounded-lg px-2 py-1 text-sm font-black text-center outline-none focus:border-indigo-400"
                         />
@@ -1204,7 +1223,8 @@ const StokGudang: React.FC<StokGudangProps> = ({ role }) => {
                       </td>
                     )}
                   </tr>
-                );
+                </React.Fragment>
+              );
               })}
             </tbody>
           </table>

@@ -190,7 +190,7 @@ function AppContent() {
                 <input 
                   type="text"
                   placeholder="Nama Lengkap"
-                  value={displayName}
+                  value={displayName || ''}
                   onChange={(e) => setDisplayName(e.target.value)}
                   required
                   className="w-full bg-slate-50/50 border-2 border-slate-100 rounded-2xl pl-14 pr-6 py-4 font-bold text-slate-900 focus:bg-white focus:border-indigo-400 outline-none transition-all placeholder:text-slate-300"
@@ -230,7 +230,7 @@ function AppContent() {
               <input 
                 type="email"
                 placeholder="Alamat Email"
-                value={email}
+                value={email || ''}
                 onChange={(e) => setEmail(e.target.value)}
                 required
                 className="w-full bg-slate-50/50 border-2 border-slate-100 rounded-2xl pl-14 pr-6 py-4 font-bold text-slate-900 focus:bg-white focus:border-indigo-400 outline-none transition-all placeholder:text-slate-300"
@@ -242,7 +242,7 @@ function AppContent() {
               <input 
                 type="password"
                 placeholder="Kata Sandi"
-                value={password}
+                value={password || ''}
                 onChange={(e) => setPassword(e.target.value)}
                 required
                 className="w-full bg-slate-50/50 border-2 border-slate-100 rounded-2xl pl-14 pr-6 py-4 font-bold text-slate-900 focus:bg-white focus:border-indigo-400 outline-none transition-all placeholder:text-slate-300"

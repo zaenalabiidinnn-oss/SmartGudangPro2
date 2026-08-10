@@ -5,6 +5,7 @@ import { handleFirestoreError, OperationType } from '../lib/errorHandlers';
 import { useWarehouse } from '../contexts/WarehouseContext';
 import { processTransaction, deleteTransaction, inspectRetur, releaseFromHold, disposeBrokenStock, releaseFromBroken, importReturLogs, bulkUpdateSpecialStock } from '../services/rekapService';
 import { SKU } from '../types';
+import { sortSkusByModelAndVariant } from '../utils/skuSorter';
 import { Trash2, RotateCcw, AlertCircle, PackageCheck, PauseCircle, XCircle, Wrench, CheckCircle2, History, X, Download, Upload, FileSpreadsheet, ChevronDown, ChevronLeft, ChevronRight } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import * as XLSX from 'xlsx';
@@ -225,10 +226,11 @@ const DataRetur: React.FC = () => {
     if (!activeWarehouse) return;
 
     const unsubSkus = onSnapshot(query(collection(db, 'skus'), where('warehouseId', '==', activeWarehouse.id)), (snap) => {
-      setSkus(snap.docs.map(doc => {
+      const mappedSkus = snap.docs.map(doc => {
         const data = doc.data();
         return { ...data, internalId: doc.id, id: data.id || doc.id.split('_').slice(1).join('_') } as SKU;
-      }));
+      });
+      setSkus(sortSkusByModelAndVariant(mappedSkus));
     }, (error) => {
       console.error("Error fetching skus in DataRetur:", error);
       handleFirestoreError(error, OperationType.LIST, 'skus');
@@ -683,7 +685,7 @@ const DataRetur: React.FC = () => {
                     <div className="space-y-2">
                       <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Alasan</label>
                       <textarea
-                        value={reason}
+                        value={reason || ''}
                         onChange={(e) => setReason(e.target.value)}
                         placeholder="Ketik alasan pembatalan/retur..."
                         className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-4 focus:ring-rose-100 focus:border-rose-400 focus:bg-white outline-none transition-all font-bold text-slate-700 text-sm h-24 resize-none"

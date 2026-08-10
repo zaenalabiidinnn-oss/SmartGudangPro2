@@ -5,6 +5,7 @@ import { handleFirestoreError, OperationType } from '../lib/errorHandlers';
 import { useWarehouse } from '../contexts/WarehouseContext';
 import { processTransaction, deleteTransaction } from '../services/rekapService';
 import { SKU } from '../types';
+import { sortSkusByModelAndVariant } from '../utils/skuSorter';
 import { Trash2, ExternalLink, AlertCircle, Filter, X, ChevronDown, Search } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
@@ -78,10 +79,11 @@ const DataKeluar: React.FC = () => {
     if (!activeWarehouse) return;
 
     const unsubSkus = onSnapshot(query(collection(db, 'skus'), where('warehouseId', '==', activeWarehouse.id)), (snap) => {
-      setSkus(snap.docs.map(doc => {
+      const mappedSkus = snap.docs.map(doc => {
         const data = doc.data();
         return { ...data, internalId: doc.id, id: data.id || doc.id.split('_').slice(1).join('_') } as SKU;
-      }));
+      });
+      setSkus(sortSkusByModelAndVariant(mappedSkus));
     }, (error) => {
       console.error("Error fetching skus in DataKeluar:", error);
       handleFirestoreError(error, OperationType.LIST, 'skus');
@@ -206,7 +208,7 @@ const DataKeluar: React.FC = () => {
                   <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Tanggal</label>
                   <input
                     type="date"
-                    value={date}
+                    value={date || ''}
                     onChange={(e) => setDate(e.target.value)}
                     className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-4 focus:ring-orange-100 focus:border-orange-400 focus:bg-white outline-none transition-all font-bold text-slate-700 text-sm"
                   />
@@ -215,7 +217,7 @@ const DataKeluar: React.FC = () => {
                   <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Ref/No. Nota</label>
                   <input
                     type="text"
-                    value={documentNo}
+                    value={documentNo || ''}
                     onChange={(e) => setDocumentNo(e.target.value)}
                     placeholder="Opsional"
                     className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-4 focus:ring-orange-100 focus:border-orange-400 focus:bg-white outline-none transition-all font-bold text-slate-700 text-sm placeholder:font-normal"
@@ -227,7 +229,7 @@ const DataKeluar: React.FC = () => {
                 <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Inventory SKU</label>
                 <div className="relative group">
                    <select
-                    value={selectedSku}
+                    value={selectedSku || ''}
                     onChange={(e) => {
                       const intId = e.target.value;
                       setSelectedSku(intId);
@@ -419,7 +421,7 @@ const DataKeluar: React.FC = () => {
                   </div>
                 </div>
                 <textarea
-                  value={reason}
+                  value={reason || ''}
                   onChange={(e) => setReason(e.target.value)}
                   placeholder="Sebutkan alasan: Rusak, Sample, Hold, dll..."
                   className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-4 focus:ring-orange-100 focus:border-orange-400 focus:bg-white outline-none transition-all font-bold text-slate-700 text-sm h-24 resize-none placeholder:font-normal placeholder:text-slate-300"
