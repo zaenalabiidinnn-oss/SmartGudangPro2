@@ -245,6 +245,70 @@ const findSku = async (warehouseId: string, skuId: string, name?: string) => {
   return { ref: null, snap: null, internalId: null };
 };
 
+// Helper to sanitize values for Firestore Document ID
+export const sanitizeFirestoreId = (value: string | undefined | null, maxLength = 25): string => {
+  if (!value) return '';
+  return String(value)
+    .trim()
+    .toUpperCase()
+    .replace(/\s+/g, '-')
+    .replace(/[/\\#?%*:[\]]/g, '')
+    .replace(/[^A-Z0-9_-]/g, '')
+    .substring(0, maxLength);
+};
+
+// Helper to generate human-readable and collision-safe transaction document IDs
+// Format: YYYYMMDD_HHMMSS_TYPE_REFERENCE_SKU_SUFFIX
+export const generateReadableTransactionId = (
+  type: string,
+  skuId: string,
+  referenceOrReceipt?: string,
+  dateStr?: string
+): string => {
+  const now = new Date();
+  
+  // Format Date: YYYYMMDD
+  let yyyymmdd = '';
+  if (dateStr && /^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
+    yyyymmdd = dateStr.replace(/-/g, '');
+  } else {
+    const y = now.getFullYear();
+    const m = String(now.getMonth() + 1).padStart(2, '0');
+    const d = String(now.getDate()).padStart(2, '0');
+    yyyymmdd = `${y}${m}${d}`;
+  }
+
+  // Format Time: HHMMSS
+  const hh = String(now.getHours()).padStart(2, '0');
+  const mm = String(now.getMinutes()).padStart(2, '0');
+  const ss = String(now.getSeconds()).padStart(2, '0');
+  const hhmmss = `${hh}${mm}${ss}`;
+
+  // 4-char random suffix for collision prevention in high-frequency operations
+  const randomSuffix = Math.random().toString(36).substring(2, 6).toUpperCase();
+
+  // Standardize type
+  let cleanType = 'TRX';
+  const rawType = (type || '').toUpperCase();
+  if (rawType.includes('SCAN')) cleanType = 'SCAN';
+  else if (rawType === 'MASUK' || rawType === 'RESTOCK') cleanType = 'MASUK';
+  else if (rawType === 'KELUAR' || rawType === 'SALE' || rawType === 'SPECIAL') cleanType = 'KELUAR';
+  else if (rawType === 'RETUR') cleanType = 'RETUR';
+  else if (rawType === 'INSPEKSI') cleanType = 'INSPEKSI';
+  else if (rawType === 'KOREKSI') cleanType = 'KOREKSI';
+
+  const cleanSku = sanitizeFirestoreId(skuId, 25) || 'SKU';
+  const cleanRef = sanitizeFirestoreId(referenceOrReceipt, 25);
+
+  if (cleanRef) {
+    return `${yyyymmdd}_${hhmmss}_${cleanType}_${cleanRef}_${cleanSku}_${randomSuffix}`;
+  } else {
+    return `${yyyymmdd}_${hhmmss}_${cleanType}_${cleanSku}_${randomSuffix}`;
+  }
+};
+
+export const buildTransactionId = generateReadableTransactionId;
+
 export const processTransaction = async (
   type: TransactionType,
   data: {
@@ -378,9 +442,11 @@ export const processTransaction = async (
           updateData.brokenStock = increment(totalQuantity);
           
           // Add a shadow record to retur logs so it appears in the Retur management sub-menu
-          const returLogRef = doc(collection(db, 'history/retur/records'));
+          const shadowTxId = generateReadableTransactionId('RETUR', data.skuId, data.receiptId || (data as any).reference || (data as any).documentNo, data.date);
+          const returLogRef = doc(db, 'history/retur/records', shadowTxId);
           batch.set(returLogRef, cleanData({
             ...data,
+            transactionId: shadowTxId,
             quantity: totalQuantity,
             skuName,
             type: 'RETUR',
@@ -471,8 +537,17 @@ export const processTransaction = async (
         else if (logData.type === 'RETUR') coll = 'history/retur/records';
         else if (logData.type === 'KOREKSI') coll = 'history/koreksi/records';
 
-        const newLogRef = doc(collection(db, coll));
-        batch.set(newLogRef, cleanData(logData));
+        const txDocId = generateReadableTransactionId(
+          logData.type,
+          logData.skuId,
+          logData.receiptId || (logData as any).reference || (logData as any).documentNo,
+          logData.date
+        );
+        const newLogRef = doc(db, coll, txDocId);
+        batch.set(newLogRef, cleanData({
+          ...logData,
+          transactionId: txDocId
+        }));
       }
     }
 
@@ -679,7 +754,8 @@ export const deleteTransaction = async (type: TransactionType, logId: string) =>
         updateData.returnStock = increment(quantity);
 
         // 3. Recreate the original RETUR record if possible
-        const returRef = doc(collection(db, 'history/retur/records'));
+        const returTxId = generateReadableTransactionId('RETUR', data.skuId, data.receiptId, dateStr);
+        const returRef = doc(db, 'history/retur/records', returTxId);
         batch.set(returRef, cleanData({
           skuId: data.skuId,
           skuName: skuSnap.data().name,
@@ -688,6 +764,7 @@ export const deleteTransaction = async (type: TransactionType, logId: string) =>
           date: dateStr,
           reason: data.reason || 'Batal Inspeksi / Reversal',
           type: 'RETUR',
+          transactionId: returTxId,
           createdAt: serverTimestamp(),
           updatedAt: serverTimestamp()
         }));
@@ -909,9 +986,11 @@ export const inspectRetur = async (
       );
 
       // Create MASUK record for Main Menu Database (History)
-      const masukRef = doc(collection(db, 'history/masuk/records'));
+      const masukTxId = generateReadableTransactionId('MASUK', data.skuId, originalLog.receiptId || originalLog.reference, dateStr);
+      const masukRef = doc(db, 'history/masuk/records', masukTxId);
       batch.set(masukRef, cleanData({
         ...originalLog,
+        transactionId: masukTxId,
         quantity: data.quantity,
         type: 'MASUK',
         isReturnConversion: true,
@@ -962,9 +1041,11 @@ export const inspectRetur = async (
     batch.update(skuRef, updateData);
 
     // 3. Create Inspection Log
-    const inspectionLogRef = doc(collection(db, 'history/inspeksi/records'));
+    const inspTxId = generateReadableTransactionId('INSPEKSI', data.skuId, undefined, dateStr);
+    const inspectionLogRef = doc(db, 'history/inspeksi/records', inspTxId);
     const logData = cleanData({
       ...data,
+      transactionId: inspTxId,
       type: 'INSPEKSI',
       createdAt: now,
       updatedAt: now
@@ -1027,10 +1108,12 @@ export const releaseFromHold = async (
     const yearStr = dateStr.substring(0, 4);
 
     // Create MASUK record
-    const masukRef = doc(collection(db, 'history/masuk/records'));
+    const masukTxId = generateReadableTransactionId('MASUK', data.skuId, 'HOLD-RELEASE', dateStr);
+    const masukRef = doc(db, 'history/masuk/records', masukTxId);
     batch.set(masukRef, cleanData({
       skuId: data.skuId,
       skuName: skuData.name,
+      transactionId: masukTxId,
       quantity: data.quantity,
       warehouseId: data.warehouseId,
       date: dateStr,
@@ -1134,10 +1217,12 @@ export const releaseFromBroken = async (
     const yearStr = dateStr.substring(0, 4);
 
     // Create MASUK record
-    const masukRef = doc(collection(db, 'history/masuk/records'));
+    const masukTxId = generateReadableTransactionId('MASUK', data.skuId, 'BROKEN-RELEASE', dateStr);
+    const masukRef = doc(db, 'history/masuk/records', masukTxId);
     batch.set(masukRef, cleanData({
       skuId: data.skuId,
       skuName: skuData.name,
+      transactionId: masukTxId,
       quantity: data.quantity,
       warehouseId: data.warehouseId,
       date: dateStr,
@@ -1217,11 +1302,13 @@ export const importReturLogs = async (
     }
 
     const skuData = skuSnap.data();
-    const logRef = doc(collection(db, 'history/retur/records'));
+    const returTxId = generateReadableTransactionId('RETUR', rec.skuId, rec.receiptId, rec.date);
+    const logRef = doc(db, 'history/retur/records', returTxId);
     
     batch.set(logRef, cleanData({
       ...rec,
       skuName: skuData.name,
+      transactionId: returTxId,
       warehouseId,
       type: 'RETUR',
       createdAt: now,
