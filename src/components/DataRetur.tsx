@@ -31,7 +31,7 @@ const DataRetur: React.FC = () => {
   const [documentNo, setDocumentNo] = useState('');
   const [returType, setReturType] = useState<'RETUR' | 'CANCEL'>('RETUR');
   const [reason, setReason] = useState('');
-  const [quantity, setQuantity] = useState(0);
+  const [quantity, setQuantity] = useState(1);
   const [inputMode, setInputMode] = useState<'PCS' | 'CARTON'>('PCS');
   const [numCartons, setNumCartons] = useState(0);
   const [extraPcs, setExtraPcs] = useState(0);
@@ -301,11 +301,9 @@ const DataRetur: React.FC = () => {
       setDocumentNo('');
       setReason('');
       setReturType('RETUR');
-      setQuantity(0);
+      setQuantity(1);
       setNumCartons(0);
       setExtraPcs(0);
-      setActiveSubTab('INSPEKSI'); // Auto switch to view the record
-      setViewMode('LOG');
     } catch (err) {
       setError('Gagal memproses data retur.');
     } finally {
@@ -583,7 +581,11 @@ const DataRetur: React.FC = () => {
                             type="button"
                             onClick={() => {
                               setInputMode(mode as any);
-                              setQuantity(0);
+                              if (mode === 'PCS') {
+                                setQuantity(1);
+                              } else {
+                                setQuantity(0);
+                              }
                               setNumCartons(0);
                               setExtraPcs(0);
                               if (mode === 'CARTON') {
@@ -609,7 +611,7 @@ const DataRetur: React.FC = () => {
                               min="1"
                               value={quantity || ''}
                               onChange={(e) => setQuantity(Number(e.target.value))}
-                              placeholder="0"
+                              placeholder="1"
                               className="w-full px-4 py-5 bg-slate-50/50 border border-slate-100 rounded-2xl focus:ring-4 focus:ring-rose-500/5 focus:border-rose-500 focus:bg-white transition-all font-black text-4xl text-rose-600 placeholder:text-slate-100 text-center tabular-nums outline-none"
                             />
                           </div>
